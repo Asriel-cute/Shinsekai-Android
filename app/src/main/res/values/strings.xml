@@ -1,0 +1,105 @@
+<resources>
+    <string name="app_name">Shinsekai</string>
+
+    <!-- 通用操作 -->
+    <string name="action_confirm">确定</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_delete">删除</string>
+    <string name="action_rename">重命名</string>
+    <string name="action_send">发送</string>
+    <string name="action_stop">停止</string>
+    <string name="action_retry">重试</string>
+    <string name="action_save">保存</string>
+    <string name="action_back">返回</string>
+    <string name="action_show">显示</string>
+    <string name="action_hide">隐藏</string>
+
+    <!-- 底部导航 -->
+    <string name="tab_sessions">会话</string>
+    <string name="tab_characters">角色</string>
+    <string name="tab_settings">设置</string>
+
+    <!-- 会话列表 -->
+    <string name="sessions_title">会话</string>
+    <string name="action_new_session">新建对话</string>
+    <string name="sessions_empty_title">还没有会话</string>
+    <string name="sessions_empty_body">点右下角的「新建对话」，选好角色即可开始</string>
+    <string name="session_menu_title">会话操作</string>
+    <string name="rename_session_title">重命名会话</string>
+    <string name="rename_session_hint">会话名称</string>
+    <string name="delete_session_title">删除会话</string>
+    <string name="delete_session_body">确定删除该会话吗？聊天记录将无法恢复。</string>
+    <string name="session_preview_fallback">新对话</string>
+
+    <!-- 新建对话 -->
+    <string name="new_session_title">新建对话</string>
+    <string name="new_session_section_characters">出场角色</string>
+    <string name="new_session_section_scenario">情景</string>
+    <string name="new_session_scenario_hint">描述这次对话的背景与开场情景，可留空</string>
+    <string name="action_start_chat">开始对话</string>
+    <string name="new_session_empty_title">还没有可选的角色</string>
+    <string name="new_session_empty_body">先到「角色」页导入 .char 角色包，再来开始对话</string>
+    <string name="action_go_import">去导入</string>
+    <string name="character_info_format">立绘 %1$d 张 · 语音 %2$d 条</string>
+    <string name="character_no_sprites">无立绘</string>
+    <string name="character_stats">立绘与语音</string>
+
+    <!-- 聊天页 -->
+    <string name="chat_title_fallback">对话</string>
+    <string name="chat_record">聊天记录</string>
+    <string name="chat_first_input_hint">请先输入你的第一句话</string>
+    <string name="chat_generating">生成中…</string>
+    <string name="chat_input_hint">输入你的台词…</string>
+    <string name="chat_not_configured_title">未配置 API</string>
+    <string name="chat_not_configured_body">请先在设置中填写 BaseUrl 与模型名称</string>
+    <string name="action_go_settings">去设置</string>
+    <string name="action_back_to_input">返回输入</string>
+    <string name="record_empty">还没有对话记录</string>
+    <string name="record_incomplete">未完成</string>
+    <string name="record_user_label">你</string>
+
+    <!-- 角色页 -->
+    <string name="characters_title">角色</string>
+    <string name="action_import">导入</string>
+    <string name="characters_empty_title">还没有角色</string>
+    <string name="characters_empty_body">点右上角「导入」，选择 .char 角色包</string>
+    <string name="import_success_format">导入成功，共 %1$d 个角色</string>
+    <string name="import_conflict_title">发现同名角色</string>
+    <string name="import_conflict_body">以下角色与已导入的角色同名，请选择处理方式：</string>
+    <string name="import_conflict_line_format">%1$s（与已有的「%2$s」同名）</string>
+    <string name="action_overwrite">覆盖</string>
+    <string name="action_keep_both">保留两者</string>
+    <string name="err_not_a_zip">不是有效的角色包（ZIP）</string>
+    <string name="err_missing_yaml">包内未找到 character.yaml</string>
+    <string name="err_malformed_yaml">character.yaml 解析失败</string>
+    <string name="err_empty_package">包内没有可导入的角色</string>
+    <string name="err_broken_archive">角色包已损坏或压缩格式不受支持</string>
+    <string name="err_session_not_found">导入会话已失效，请重新选择文件</string>
+    <string name="err_io">读取文件失败</string>
+
+    <!-- 角色详情 -->
+    <string name="character_source_file">来源文件</string>
+    <string name="character_imported_at">导入时间</string>
+    <string name="character_setting">角色设定</string>
+    <string name="character_emotion_tags">情绪标签</string>
+    <string name="character_sprites">立绘</string>
+    <string name="character_value_none">（无）</string>
+    <string name="delete_character_title">删除角色</string>
+    <string name="delete_character_body">删除后不影响已有会话，但其中的立绘与语音将不可用。确定删除吗？</string>
+
+    <!-- 设置页 -->
+    <string name="settings_status_configured">已配置</string>
+    <string name="settings_status_not_configured">未配置</string>
+    <string name="settings_base_url_label">BaseUrl</string>
+    <string name="settings_base_url_hint">填到能拼接 responses 的前缀，如 https://api.openai.com/v1/</string>
+    <string name="settings_api_key_label">API Key</string>
+    <string name="settings_api_key_hint">留空表示不使用鉴权</string>
+    <string name="settings_model_label">模型名称</string>
+    <string name="settings_reasoning_label">推理档位</string>
+    <string name="settings_saved">已保存</string>
+    <string name="settings_save_failed">保存失败，请重试</string>
+    <string name="effort_none">无</string>
+    <string name="effort_low">低</string>
+    <string name="effort_high">高</string>
+    <string name="effort_max">最高</string>
+</resources>

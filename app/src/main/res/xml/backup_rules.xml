@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全量备份规则：默认全备份，暂无 include/exclude 定制 -->
+<full-backup-content />

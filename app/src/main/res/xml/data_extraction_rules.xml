@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 云备份 / 设备迁移规则：默认行为，暂无 include/exclude 定制 -->
+<data-extraction-rules>
+    <cloud-backup />
+</data-extraction-rules>
