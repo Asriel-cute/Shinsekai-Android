@@ -78,6 +78,8 @@
     <string name="err_io">读取文件失败</string>
 
     <!-- 角色详情 -->
+    <string name="character_panel_basic_info">基本信息</string>
+    <string name="character_panel_settings">设定与标签</string>
     <string name="character_source_file">来源文件</string>
     <string name="character_imported_at">导入时间</string>
     <string name="character_setting">角色设定</string>
@@ -90,6 +92,8 @@
     <!-- 设置页 -->
     <string name="settings_status_configured">已配置</string>
     <string name="settings_status_not_configured">未配置</string>
+    <string name="settings_panel_api">API 服务</string>
+    <string name="settings_panel_model">模型与推理</string>
     <string name="settings_base_url_label">BaseUrl</string>
     <string name="settings_base_url_hint">填到能拼接 responses 的前缀，如 https://api.openai.com/v1/</string>
     <string name="settings_api_key_label">API Key</string>

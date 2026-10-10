@@ -39,8 +39,6 @@ internal fun navTransitionSpecs(
 
 // 跨 Tab 不做全屏位移：目标页首帧需完成初次组合与排版，位移对掉帧最敏感；
 // 统一 700ms 淡入淡出。
-private const val TAB_FADE_DURATION_MS = 700
-
 private fun AnimatedContentTransitionScope<Scene<NavKey>>.tabOrDefault(
     indexer: TabIndexer,
     default: AnimatedContentTransitionScope<Scene<NavKey>>.() -> ContentTransform,
@@ -48,8 +46,8 @@ private fun AnimatedContentTransitionScope<Scene<NavKey>>.tabOrDefault(
     val from = indexer.indexOf(initialState.key)
     val to = indexer.indexOf(targetState.key)
     if (from < 0 || to < 0 || from == to) return default(this)
-    return fadeIn(tween(TAB_FADE_DURATION_MS)) togetherWith
-        fadeOut(tween(TAB_FADE_DURATION_MS))
+    return fadeIn(tween(700)) togetherWith
+        fadeOut(tween(700))
 }
 
 // Scene.key 是 NavEntry.contentKey，不是路由对象；子路由需反查所在栈。

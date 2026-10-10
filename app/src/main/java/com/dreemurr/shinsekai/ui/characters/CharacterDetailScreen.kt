@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.ui.characters
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,10 +21,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -38,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -95,51 +99,122 @@ fun CharacterDetailScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            InfoItem(
-                label = stringResource(R.string.character_source_file),
-                value = details.sourceFileName.ifBlank { stringResource(R.string.character_value_none) },
-            )
-            InfoItem(
-                label = stringResource(R.string.character_imported_at),
-                value = formatImportedAt(details.importedAt),
-            )
-            InfoItem(
-                label = stringResource(R.string.character_stats),
-                value = spriteInfoText(details),
-            )
-            InfoItem(
-                label = stringResource(R.string.character_setting),
-                value = details.characterSetting.ifBlank { stringResource(R.string.character_value_none) },
-                valueStyle = MaterialTheme.typography.bodyMedium,
-            )
-            InfoItem(
-                label = stringResource(R.string.character_emotion_tags),
-                value = details.emotionTags.ifBlank { stringResource(R.string.character_value_none) },
-                valueStyle = MaterialTheme.typography.bodyMedium,
-            )
-
-            Text(stringResource(R.string.character_sprites), style = MaterialTheme.typography.labelLarge)
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(vertical = 4.dp),
+            // 基本属性 Panel
+            OutlinedCard(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                items(details.sprites.size) { index -> SpriteThumbnail(vm.spriteFile(index)) }
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.character_panel_basic_info),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    InfoItem(
+                        label = stringResource(R.string.character_source_file),
+                        value = details.sourceFileName.ifBlank { stringResource(R.string.character_value_none) },
+                    )
+                    InfoItem(
+                        label = stringResource(R.string.character_imported_at),
+                        value = formatImportedAt(details.importedAt),
+                    )
+                    InfoItem(
+                        label = stringResource(R.string.character_stats),
+                        value = spriteInfoText(details),
+                    )
+                }
             }
 
-            Spacer(Modifier.height(8.dp))
+            // 设定与标签 Panel
+            OutlinedCard(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.character_panel_settings),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    InfoItem(
+                        label = stringResource(R.string.character_setting),
+                        value = details.characterSetting.ifBlank { stringResource(R.string.character_value_none) },
+                        valueStyle = MaterialTheme.typography.bodyMedium,
+                    )
+                    InfoItem(
+                        label = stringResource(R.string.character_emotion_tags),
+                        value = details.emotionTags.ifBlank { stringResource(R.string.character_value_none) },
+                        valueStyle = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+
+            // 立绘展示 Panel
+            OutlinedCard(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.character_sprites),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp),
+                    ) {
+                        items(details.sprites.size) { index -> SpriteThumbnail(vm.spriteFile(index)) }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
             Button(
                 onClick = { showDelete = true },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error,
                     contentColor = MaterialTheme.colorScheme.onError,
                 ),
-                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
             ) {
-                Text(stringResource(R.string.action_delete))
+                Text(
+                    stringResource(R.string.action_delete),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
             }
+            Spacer(Modifier.height(16.dp))
         }
     }
 

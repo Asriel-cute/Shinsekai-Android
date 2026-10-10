@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.ui.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,10 +11,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -33,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -44,7 +50,6 @@ import com.dreemurr.shinsekai.R
 import com.dreemurr.shinsekai.chat.ChatSettings
 import com.dreemurr.shinsekai.chat.ReasoningEffort
 import com.dreemurr.shinsekai.di.LocalAppContainer
-import com.dreemurr.shinsekai.settings.SettingsRepository
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,8 +76,6 @@ fun SettingsScreen() {
         }
     }
 
-    val configured = SettingsRepository.isConfigured(form)
-
     val savedMsg = stringResource(R.string.settings_saved)
     val failedMsg = stringResource(R.string.settings_save_failed)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -87,66 +90,101 @@ fun SettingsScreen() {
                     .fillMaxSize()
                     .imePadding()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Text(
-                    stringResource(
-                        if (configured) R.string.settings_status_configured
-                        else R.string.settings_status_not_configured,
+                // API 服务配置 Panel
+                OutlinedCard(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                     ),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (configured) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.error,
-                )
-
-                OutlinedTextField(
-                    value = form.baseUrl,
-                    onValueChange = { form = form.copy(baseUrl = it) },
-                    label = { Text(stringResource(R.string.settings_base_url_label)) },
-                    supportingText = { Text(stringResource(R.string.settings_base_url_hint)) },
-                    singleLine = true,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
                     modifier = Modifier.fillMaxWidth(),
-                )
+                ) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_panel_api),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
 
-                OutlinedTextField(
-                    value = form.apiKey,
-                    onValueChange = { form = form.copy(apiKey = it) },
-                    label = { Text(stringResource(R.string.settings_api_key_label)) },
-                    supportingText = { Text(stringResource(R.string.settings_api_key_hint)) },
-                    singleLine = true,
-                    visualTransformation =
-                        if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        TextButton(onClick = { showKey = !showKey }) {
-                            Text(stringResource(if (showKey) R.string.action_hide else R.string.action_show))
-                        }
-                    },
+                        OutlinedTextField(
+                            value = form.baseUrl,
+                            onValueChange = { form = form.copy(baseUrl = it) },
+                            label = { Text(stringResource(R.string.settings_base_url_label)) },
+                            supportingText = { Text(stringResource(R.string.settings_base_url_hint)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+
+                        OutlinedTextField(
+                            value = form.apiKey,
+                            onValueChange = { form = form.copy(apiKey = it) },
+                            label = { Text(stringResource(R.string.settings_api_key_label)) },
+                            supportingText = { Text(stringResource(R.string.settings_api_key_hint)) },
+                            singleLine = true,
+                            visualTransformation =
+                                if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                TextButton(onClick = { showKey = !showKey }) {
+                                    Text(stringResource(if (showKey) R.string.action_hide else R.string.action_show))
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
+                // 模型与推理配置 Panel
+                OutlinedCard(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
                     modifier = Modifier.fillMaxWidth(),
-                )
+                ) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.settings_panel_model),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
 
-                OutlinedTextField(
-                    value = form.modelName,
-                    onValueChange = { form = form.copy(modelName = it) },
-                    label = { Text(stringResource(R.string.settings_model_label)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                        OutlinedTextField(
+                            value = form.modelName,
+                            onValueChange = { form = form.copy(modelName = it) },
+                            label = { Text(stringResource(R.string.settings_model_label)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
 
-                Column {
-                    Text(
-                        stringResource(R.string.settings_reasoning_label),
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        EffortOptions.forEachIndexed { index, (value, label) ->
-                            SegmentedButton(
-                                selected = form.reasoningEffort == value,
-                                onClick = { form = form.copy(reasoningEffort = value) },
-                                shape = SegmentedButtonDefaults.itemShape(index, EffortOptions.size),
-                            ) {
-                                Text(stringResource(label))
+                        Column {
+                            Text(
+                                stringResource(R.string.settings_reasoning_label),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                EffortOptions.forEachIndexed { index, (value, label) ->
+                                    SegmentedButton(
+                                        selected = form.reasoningEffort == value,
+                                        onClick = { form = form.copy(reasoningEffort = value) },
+                                        shape = SegmentedButtonDefaults.itemShape(index, EffortOptions.size),
+                                    ) {
+                                        Text(stringResource(label))
+                                    }
+                                }
                             }
                         }
                     }
@@ -164,9 +202,20 @@ fun SettingsScreen() {
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                 ) {
-                    Text(stringResource(R.string.action_save))
+                    Text(
+                        stringResource(R.string.action_save),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
 
                 Spacer(Modifier.height(24.dp))

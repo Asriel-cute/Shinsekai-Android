@@ -226,10 +226,8 @@ private val ILLEGAL_FILE_NAME_CHARS = Regex("[\\x00-\\x1f<>:\"/\\\\|?*]")
 private fun cleanFileName(raw: String): String {
     val name = ILLEGAL_FILE_NAME_CHARS.replace(raw, "_").trim(' ', '.')
     if (name.isEmpty()) return "asset"
-    if (name.length <= MAX_FILE_NAME_LENGTH) return name
+    if (name.length <= 120) return name
     val dot = name.lastIndexOf('.')
     val ext = if (dot > 0) name.substring(dot) else ""
-    return name.substring(0, MAX_FILE_NAME_LENGTH - ext.length) + ext
+    return name.substring(0, 120 - ext.length) + ext
 }
-
-private const val MAX_FILE_NAME_LENGTH = 120

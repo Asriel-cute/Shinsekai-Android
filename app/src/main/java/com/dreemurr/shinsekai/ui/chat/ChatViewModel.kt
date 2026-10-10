@@ -221,7 +221,7 @@ class ChatViewModel(
                 terminal = Terminal.Done
                 // 未解析出 dialog 时按格式错误保存残片。
                 persistAssistant(event.rawText, complete = parsedAnyDialog)
-                finishStream(if (parsedAnyDialog) null else REPLY_FORMAT_ERROR)
+                finishStream(if (parsedAnyDialog) null else "回复格式异常，未解析出对话内容")
             }
 
             is ChatStreamEvent.Error -> {
@@ -263,10 +263,10 @@ class ChatViewModel(
         val speaker = charactersByName[name]
 
         if (speaker == null) {
-            val narration = name.isEmpty() || name == NARRATION
+            val narration = name.isEmpty() || name == "旁白"
             return AppliedDialog(
                 line = DisplayLine(
-                    name = if (narration) NARRATION else name,
+                    name = if (narration) "旁白" else name,
                     speech = dialog.speech,
                     kind = if (narration) LineKind.Narration else LineKind.Stranger,
                     speakerColorHex = null,
@@ -350,7 +350,7 @@ class ChatViewModel(
         typewriterJob = viewModelScope.launch {
             var index = 0
             while (index < full.length) {
-                delay(TYPEWRITER_INTERVAL_MS)
+                delay(40L)
                 index = full.offsetByCodePoints(index, 1)
                 _visibleSpeech.value = full.substring(0, index)
             }
@@ -371,11 +371,5 @@ class ChatViewModel(
         viewModelScope.launch {
             sessionRepo.appendAssistantResult(sessionId, rawText, complete)
         }
-    }
-
-    private companion object {
-        const val NARRATION = "旁白"
-        const val TYPEWRITER_INTERVAL_MS = 40L
-        const val REPLY_FORMAT_ERROR = "回复格式异常，未解析出对话内容"
     }
 }

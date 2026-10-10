@@ -1,10 +1,13 @@
 package com.dreemurr.shinsekai
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -46,6 +49,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
         val container = (application as MainApplication).container
         setContent {
             ShinsekaiTheme {
@@ -107,6 +113,7 @@ private fun AppRoot() {
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             if (showBottomBar) {
                 NavigationBar {
@@ -123,11 +130,14 @@ private fun AppRoot() {
             }
         },
     ) { padding ->
-        // 消费根部已处理的 insets，避免子页面重复留白。
         NavDisplay(
             entries = state.toEntries(provider),
             onBack = { navigator.goBack() },
-            modifier = Modifier.padding(padding).consumeWindowInsets(padding),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = padding.calculateBottomPadding())
+                // 底栏高度已含导航栏 inset，消费掉避免子页面 Scaffold 重复叠加底部留白。
+                .consumeWindowInsets(padding),
             transitionSpec = transitions.forward,
             popTransitionSpec = transitions.pop,
             predictivePopTransitionSpec = transitions.predictivePop,

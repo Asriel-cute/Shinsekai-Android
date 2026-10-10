@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.ui.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -34,13 +36,17 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -106,6 +112,7 @@ fun ChatScreen(
                     state.title.ifBlank { stringResource(R.string.chat_title_fallback) },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleMedium,
                 )
             },
             navigationIcon = {
@@ -124,6 +131,12 @@ fun ChatScreen(
                     )
                 }
             },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.85f),
+                titleContentColor = MaterialTheme.colorScheme.onBackground,
+                navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                actionIconContentColor = MaterialTheme.colorScheme.onBackground,
+            ),
         )
 
         Box(
@@ -202,7 +215,7 @@ private fun SpriteImage(sprite: ChatViewModel.SpriteView) {
         contentScale = ContentScale.Fit,
         modifier = Modifier
             .fillMaxHeight(sprite.spriteScale.coerceIn(0.1f, 1f))
-            .alpha(if (sprite.dimmed) DIM_ALPHA else 1f),
+            .alpha(if (sprite.dimmed) 0.4f else 1f),
     )
 }
 
@@ -225,13 +238,15 @@ private fun ChatBottomBar(
             onSend = onSend,
         )
 
-        Phase.Streaming, Phase.Playing -> if (streaming) StopBar(onStop = onStop)
+        // 无底栏可见时补齐导航栏内边距，避免对话框被系统导航栏遮挡。
+        Phase.Streaming, Phase.Playing ->
+            if (streaming) StopBar(onStop = onStop) else Spacer(Modifier.navigationBarsPadding())
 
-        Phase.Error -> Unit
+        Phase.Error -> Spacer(Modifier.navigationBarsPadding())
     }
 }
 
-// 加载时显示进度占位，避免输入栏闪现。
+// 悬浮式胶囊输入栏，贴合桌面端 2.3.1 pill layout 风格。
 @Composable
 private fun InputBar(
     loading: Boolean,
@@ -243,7 +258,6 @@ private fun InputBar(
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
                 .navigationBarsPadding()
                 .padding(16.dp),
             horizontalArrangement = Arrangement.Center,
@@ -251,54 +265,143 @@ private fun InputBar(
             CircularProgressIndicator(
                 modifier = Modifier.size(20.dp),
                 strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
         return
     }
-    Row(
-        Modifier
+    Surface(
+        shape = RoundedCornerShape(26.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+        modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
             .navigationBarsPadding()
             .imePadding()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = 14.dp, vertical = 4.dp),
     ) {
-        OutlinedTextField(
-            value = input,
-            onValueChange = onInputChange,
-            modifier = Modifier.weight(1f),
-            placeholder = { Text(stringResource(R.string.chat_input_hint)) },
-            maxLines = 4,
-        )
-        Spacer(Modifier.width(8.dp))
-        FilledIconButton(onClick = onSend, enabled = input.isNotBlank()) {
-            Icon(
-                Icons.AutoMirrored.Filled.Send,
-                contentDescription = stringResource(R.string.action_send),
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = onInputChange,
+                modifier = Modifier.weight(1f),
+                placeholder = {
+                    Text(
+                        stringResource(R.string.chat_input_hint),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                maxLines = 4,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                ),
             )
+            Spacer(Modifier.width(6.dp))
+            FilledIconButton(
+                onClick = onSend,
+                enabled = input.isNotBlank(),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                ),
+                modifier = Modifier.size(34.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = stringResource(R.string.action_send),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun StopBar(onStop: () -> Unit) {
-    Row(
-        Modifier
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+        modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 14.dp, vertical = 4.dp),
     ) {
-        OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) {
-            Text(stringResource(R.string.action_stop))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            OutlinedButton(
+                onClick = onStop,
+                modifier = Modifier.weight(1f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+            ) {
+                Text(
+                    stringResource(R.string.action_stop),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
-        CircularProgressIndicator(
-            modifier = Modifier.size(20.dp),
-            strokeWidth = 2.dp,
-        )
+    }
+}
+
+// Galgame 风格独立名字铭牌，还原 2.3.1 chat-name 浮层规范。
+@Composable
+private fun NameBadge(line: ChatViewModel.DisplayLine) {
+    val speakerColor = remember(line.speakerColorHex) {
+        parseHexColor(line.speakerColorHex)
+    }
+    val badgeBg = when (line.kind) {
+        LineKind.Character -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f)
+        LineKind.Narration, LineKind.Stranger -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f)
+    }
+    val badgeBorder = when (line.kind) {
+        LineKind.Character -> speakerColor?.copy(alpha = 0.65f) ?: MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+        LineKind.Narration, LineKind.Stranger -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    }
+    val textColor = when (line.kind) {
+        LineKind.Character -> speakerColor ?: MaterialTheme.colorScheme.onPrimaryContainer
+        LineKind.Narration, LineKind.Stranger -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Surface(
+        shape = RoundedCornerShape(topStart = 10.dp, topEnd = 12.dp, bottomStart = 0.dp, bottomEnd = 0.dp),
+        color = badgeBg,
+        border = BorderStroke(1.dp, badgeBorder),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = line.name,
+                color = textColor,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        }
     }
 }
 
@@ -310,27 +413,50 @@ private fun DialogueBox(
     onBackToInput: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val line = state.line
+    val showNameBadge = state.phase != Phase.Error && state.phase != Phase.Streaming && line != null
+
     // 非 weight 子项用 heightIn，避免挤掉立绘和输入栏；状态行贴底。
     Column(
-        modifier
-            .background(BOX_COLOR)
-            .padding(horizontal = 20.dp, vertical = 14.dp)
-            .heightIn(min = BOX_MIN_HEIGHT),
-        verticalArrangement = Arrangement.SpaceBetween,
+        modifier = modifier
+            .padding(horizontal = 12.dp, vertical = 2.dp),
     ) {
-        when (state.phase) {
-            Phase.Error -> ErrorContent(
-                error = state.error.orEmpty(),
-                onRetry = onRetry,
-                onBackToInput = onBackToInput,
-            )
+        if (line != null && showNameBadge) {
+            NameBadge(line)
+        }
 
-            Phase.Streaming -> CenteredHint(
-                text = stringResource(R.string.chat_generating),
-                showProgress = true,
-            )
+        Surface(
+            shape = if (showNameBadge) {
+                RoundedCornerShape(topStart = 0.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
+            } else {
+                RoundedCornerShape(16.dp)
+            },
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    // 内容区高度不含内边距。
+                    .heightIn(min = 130.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                when (state.phase) {
+                    Phase.Error -> ErrorContent(
+                        error = state.error.orEmpty(),
+                        onRetry = onRetry,
+                        onBackToInput = onBackToInput,
+                    )
 
-            else -> LineContent(state, visibleSpeech)
+                    Phase.Streaming -> CenteredHint(
+                        text = stringResource(R.string.chat_generating),
+                        showProgress = true,
+                    )
+
+                    else -> LineContent(state, visibleSpeech)
+                }
+            }
         }
     }
 }
@@ -339,7 +465,7 @@ private fun DialogueBox(
 private fun ErrorContent(error: String, onRetry: () -> Unit, onBackToInput: () -> Unit) {
     Text(
         error,
-        color = Color(0xFFFFB4AB),
+        color = MaterialTheme.colorScheme.error,
         style = MaterialTheme.typography.bodyLarge,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -361,18 +487,6 @@ private fun LineContent(state: ChatViewModel.UiState, visibleSpeech: StateFlow<S
     }
 
     Column {
-        Text(
-            line.name,
-            color = when (line.kind) {
-                LineKind.Character ->
-                    remember(line.speakerColorHex) { parseHexColor(line.speakerColorHex) } ?: BOX_TEXT_COLOR
-
-                LineKind.Narration, LineKind.Stranger -> BOX_SUBTLE_COLOR
-            },
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(8.dp))
         SpeechText(full = line.speech, visibleSpeech = visibleSpeech)
     }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
@@ -380,7 +494,7 @@ private fun LineContent(state: ChatViewModel.UiState, visibleSpeech: StateFlow<S
             !state.typing && state.queueSize == 0 && state.streaming ->
                 Text(
                     stringResource(R.string.chat_generating),
-                    color = BOX_SUBTLE_COLOR,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelMedium,
                 )
 
@@ -388,7 +502,7 @@ private fun LineContent(state: ChatViewModel.UiState, visibleSpeech: StateFlow<S
                 Icon(
                     Icons.Filled.KeyboardArrowDown,
                     contentDescription = null,
-                    tint = BOX_SUBTLE_COLOR,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
         }
     }
@@ -399,7 +513,7 @@ private fun CenteredHint(text: String, showProgress: Boolean = false) {
     Box(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = BOX_MIN_HEIGHT),
+            .heightIn(min = 130.dp),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -407,13 +521,13 @@ private fun CenteredHint(text: String, showProgress: Boolean = false) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(28.dp),
                     strokeWidth = 2.dp,
-                    color = BOX_TEXT_COLOR,
+                    color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(12.dp))
             }
             Text(
                 text,
-                color = BOX_SUBTLE_COLOR,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -435,15 +549,15 @@ private fun SpeechText(full: String, visibleSpeech: StateFlow<String>) {
             color = Color.Transparent,
             style = style,
             modifier = Modifier
-                .heightIn(max = SPEECH_MAX_HEIGHT)
+                .heightIn(max = 132.dp)
                 .clearAndSetSemantics {},
         )
         Text(
             visible.ifBlank { " " },
-            color = BOX_TEXT_COLOR,
+            color = MaterialTheme.colorScheme.onSurface,
             style = style,
             modifier = Modifier
-                .heightIn(max = SPEECH_MAX_HEIGHT)
+                .heightIn(max = 132.dp)
                 .verticalScroll(scrollState),
         )
     }
@@ -509,15 +623,5 @@ private fun RecordEntryItem(entry: SessionEntry) {
 
         Role.system -> Unit
     }
-    HorizontalDivider()
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
 }
-
-// 固定深色半透明，不随主题切换。
-private val BOX_COLOR = Color(0xCC141218)
-private val BOX_TEXT_COLOR = Color(0xFFF0EDE8)
-private val BOX_SUBTLE_COLOR = Color(0xFFB8B2C0)
-private const val DIM_ALPHA = 0.4f
-
-// 内容区高度不含内边距；台词约 6 行后滚动。
-private val BOX_MIN_HEIGHT = 150.dp
-private val SPEECH_MAX_HEIGHT = 156.dp

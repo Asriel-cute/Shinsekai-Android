@@ -11,9 +11,6 @@ import java.util.zip.ZipInputStream
 // PK 头先暂存整包并用 ZipFile 按需解压，避免流式穿越 models/；失败回退 ZipInputStream。
 internal object CharacterPackageReader {
 
-    private const val IO_BUFFER_SIZE = 64 * 1024
-    private const val PACKAGE_TMP = "package.zip"
-
     // open 必须能重复打开同一来源。
     fun extract(open: () -> InputStream, rawDir: File): ByteArray {
         if (!open().use(::looksLikeZip)) {
@@ -24,7 +21,7 @@ internal object CharacterPackageReader {
 
     // 结构错误或写盘失败直接抛出；其他失败清理半成品后回退流式。
     private fun tryFastPath(open: () -> InputStream, rawDir: File): ByteArray {
-        val tmp = File(rawDir.parentFile, PACKAGE_TMP)
+        val tmp = File(rawDir.parentFile, "package.zip")
         try {
             copyTo(open(), tmp)
             return extractRandomAccess(tmp, rawDir)
@@ -41,9 +38,9 @@ internal object CharacterPackageReader {
 
     private fun copyTo(input: InputStream, target: File) {
         target.parentFile?.mkdirs()
-        input.buffered(IO_BUFFER_SIZE).use { source ->
-            target.outputStream().buffered(IO_BUFFER_SIZE).use { out ->
-                source.copyTo(out, IO_BUFFER_SIZE)
+        input.buffered(64 * 1024).use { source ->
+            target.outputStream().buffered(64 * 1024).use { out ->
+                source.copyTo(out, 64 * 1024)
             }
         }
     }
@@ -70,7 +67,7 @@ internal object CharacterPackageReader {
     private fun extractStreaming(input: InputStream, rawDir: File): ByteArray {
         var entriesSeen = 0
         var yamlBytes: ByteArray? = null
-        val zip = ZipInputStream(input.buffered(IO_BUFFER_SIZE))
+        val zip = ZipInputStream(input.buffered(64 * 1024))
         try {
             while (true) {
                 val entry = zip.nextEntry ?: break
@@ -118,8 +115,8 @@ internal object CharacterPackageReader {
     private fun writeFile(input: InputStream, target: File) {
         try {
             target.parentFile?.mkdirs()
-            target.outputStream().buffered(IO_BUFFER_SIZE).use { out ->
-                input.copyTo(out, IO_BUFFER_SIZE)
+            target.outputStream().buffered(64 * 1024).use { out ->
+                input.copyTo(out, 64 * 1024)
             }
         } catch (e: IOException) {
             throw CharacterPackageException(ImportError.Io, "解压素材失败: ${target.name}", e)
