@@ -64,8 +64,10 @@ fun SettingsScreen() {
     val saved by vm.settings.collectAsStateWithLifecycle()
 
     // 只初始化一次，持久化回写不覆盖正在编辑的内容。
-    var form by remember { mutableStateOf(ChatSettings()) }
-    var initialized by remember { mutableStateOf(false) }
+    // 首帧直接用已就绪的仓库数据，避免先渲染空表单再整体回填造成二次重组
+    // 与输入框浮动标签动画并发掉帧；仓库尚未加载完（占位值）时才退回异步回填。
+    var form by remember { mutableStateOf(saved) }
+    var initialized by remember { mutableStateOf(saved != ChatSettings()) }
     var showKey by remember { mutableStateOf(false) }
 
     LaunchedEffect(saved) {

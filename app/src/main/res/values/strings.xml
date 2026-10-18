@@ -90,14 +90,12 @@
     <string name="delete_character_body">删除后不影响已有会话，但其中的立绘与语音将不可用。确定删除吗？</string>
 
     <!-- 设置页 -->
-    <string name="settings_status_configured">已配置</string>
-    <string name="settings_status_not_configured">未配置</string>
     <string name="settings_panel_api">API 服务</string>
     <string name="settings_panel_model">模型与推理</string>
     <string name="settings_base_url_label">BaseUrl</string>
-    <string name="settings_base_url_hint">填到能拼接 responses 的前缀，如 https://api.openai.com/v1/</string>
+    <string name="settings_base_url_hint">请填能够兼容OpenAI responses接口的url，如https://api.openai.com/v1/</string>
     <string name="settings_api_key_label">API Key</string>
-    <string name="settings_api_key_hint">留空表示不使用鉴权</string>
+    <string name="settings_api_key_hint">如无需密钥可留空</string>
     <string name="settings_model_label">模型名称</string>
     <string name="settings_reasoning_label">推理档位</string>
     <string name="settings_saved">已保存</string>

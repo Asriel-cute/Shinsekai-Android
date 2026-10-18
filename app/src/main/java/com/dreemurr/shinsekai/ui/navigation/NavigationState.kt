@@ -85,18 +85,13 @@ class AppNavigator(val state: NavigationState) {
     // NewSession -> Chat 替换栈顶，聊天返回时直接回列表。
     fun popAndNavigate(route: NavKey) {
         val stack = state.backStacks[state.topLevelRoute] ?: return
-        if (stack.lastOrNull() in state.backStacks.keys) {
-            // 根路由不替换。
-            stack.add(route)
-            return
-        }
         if (stack.size > 1) stack.removeLastOrNull()
         stack.add(route)
     }
 
     fun goBack() {
         val stack = state.backStacks[state.topLevelRoute] ?: error("stack missing")
-        if (stack.lastOrNull() == state.topLevelRoute) {
+        if (stack.size == 1) {
             // 根部返回到起始 Tab。
             state.topLevelRoute = state.startRoute
         } else {

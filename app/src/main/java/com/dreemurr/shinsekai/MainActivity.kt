@@ -1,6 +1,5 @@
 package com.dreemurr.shinsekai
 
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -38,7 +37,6 @@ import com.dreemurr.shinsekai.ui.navigation.ChatRoute
 import com.dreemurr.shinsekai.ui.navigation.NewSessionRoute
 import com.dreemurr.shinsekai.ui.navigation.SessionsRoute
 import com.dreemurr.shinsekai.ui.navigation.SettingsRoute
-import com.dreemurr.shinsekai.ui.navigation.navTransitionSpecs
 import com.dreemurr.shinsekai.ui.navigation.rememberNavigationState
 import com.dreemurr.shinsekai.ui.newsession.NewSessionScreen
 import com.dreemurr.shinsekai.ui.sessions.SessionsScreen
@@ -49,9 +47,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            window.isNavigationBarContrastEnforced = false
-        }
+        window.isNavigationBarContrastEnforced = false
         val container = (application as MainApplication).container
         setContent {
             ShinsekaiTheme {
@@ -107,11 +103,6 @@ private fun AppRoot() {
     // 子页面隐藏底部导航栏。
     val showBottomBar = state.backStacks[state.topLevelRoute]?.lastOrNull() == state.topLevelRoute
 
-    val tabOrder = remember { TopLevelItems.map { it.route } }
-    val transitions = remember(tabOrder, state.backStacks) {
-        navTransitionSpecs(tabOrder, state.backStacks)
-    }
-
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
@@ -138,9 +129,6 @@ private fun AppRoot() {
                 .padding(bottom = padding.calculateBottomPadding())
                 // 底栏高度已含导航栏 inset，消费掉避免子页面 Scaffold 重复叠加底部留白。
                 .consumeWindowInsets(padding),
-            transitionSpec = transitions.forward,
-            popTransitionSpec = transitions.pop,
-            predictivePopTransitionSpec = transitions.predictivePop,
         )
     }
 }
