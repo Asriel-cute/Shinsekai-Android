@@ -77,7 +77,7 @@ class AppNavigator(val state: NavigationState) {
     fun navigate(route: NavKey) {
         if (route in state.backStacks.keys) {
             state.topLevelRoute = route
-        } else {
+        } else if(state.backStacks[state.topLevelRoute]?.lastOrNull() != route) {
             state.backStacks[state.topLevelRoute]?.add(route)
         }
     }

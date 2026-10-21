@@ -7,18 +7,20 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.job
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
 import retrofit2.Call
+import retrofit2.Response
 import retrofit2.Retrofit
-import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 // 终止事件携带 LLM 原文，供完整或残片落盘。
@@ -27,6 +29,18 @@ sealed interface ChatStreamEvent {
     data class Completed(val rawText: String) : ChatStreamEvent
     data class Cancelled(val rawText: String) : ChatStreamEvent
     data class Error(val rawText: String, val message: String) : ChatStreamEvent
+}
+
+// 模型列表拉取结果。
+sealed interface ModelsResult {
+    data class Success(val models: List<String>) : ModelsResult
+    data class Failure(val message: String) : ModelsResult
+}
+
+// 连通性测试结果。
+sealed interface ConnectionTestResult {
+    data class Success(val elapsedMs: Long) : ConnectionTestResult
+    data class Failure(val message: String) : ConnectionTestResult
 }
 
 class ChatRepository {
@@ -70,23 +84,23 @@ class ChatRepository {
         history: List<InputItem>,
     ): Flow<ChatStreamEvent> = flow {
 
-        val api = apiFor(settings.baseUrl)
+        val spec = specFor(settings.provider, settings.apiType)
 
         // 非法存储值回退 none。
         val effort = ReasoningEffort.entries.firstOrNull { it.name == settings.reasoningEffort }
             ?: ReasoningEffort.none
 
-        val request = ResponsesRequest(
-            model = settings.modelName,
-            input = history,
-            reasoning = Reasoning(effort)
-        )
+        val api = apiFor(settings.baseUrl)
 
         cancelRequested = false
         synchronized(rawBuffer) { rawBuffer.setLength(0) }
         streamActive = true
 
-        val call = api.streamChat("responses", "Bearer ${settings.apiKey}", request)
+        val call = api.postStream(
+            spec.streamUrl(settings.modelName),
+            spec.headers(settings.apiKey),
+            spec.buildStreamBody(json, settings.modelName, history, effort),
+        )
         currentCall = call
 
         // 阻塞读不响应协程取消，需联动底层连接。
@@ -106,8 +120,7 @@ class ChatRepository {
             }
 
             if (!response.isSuccessful) {
-                val errorBody = runCatching { response.errorBody()?.string() }.getOrNull()
-                emit(ChatStreamEvent.Error(raw(), httpErrorMessage(response.code(), errorBody)))
+                emit(ChatStreamEvent.Error(raw(), responseError(response)))
                 return@flow
             }
 
@@ -117,15 +130,16 @@ class ChatRepository {
                 return@flow
             }
 
-            emit(readSse(body, parser, call))
+            emit(readSse(body, spec, parser, call))
         } finally {
             streamActive = false
         }
     }.flowOn(Dispatchers.IO)
 
-    // completed、incomplete 和 EOF 按完成；读取异常区分停止与网络中断。
+    // 各家事件差异由 spec 解析；EOF 按完成；读取异常区分停止与网络中断。
     private suspend fun FlowCollector<ChatStreamEvent>.readSse(
         body: ResponseBody,
+        spec: ProviderSpec,
         parser: DialogJsonParser,
         call: Call<ResponseBody>,
     ): ChatStreamEvent {
@@ -133,28 +147,37 @@ class ChatRepository {
             body.byteStream().bufferedReader().use { reader ->
                 while (true) {
                     val line = reader.readLine() ?: break
-                    // 类型取 data JSON 的 type，忽略 event: 行。
+                    // 忽略 event: 行，类型取 data JSON 的字段。
                     if (!line.startsWith("data:")) continue
+                    val payload = line.substring(5).trim()
+                    if (payload.isEmpty()) continue
 
-                    val event = decodeEvent(line) ?: continue
+                    // OpenAI 风格流结束哨兵。
+                    if (payload == "[DONE]") return ChatStreamEvent.Completed(raw())
 
-                    when (event.type) {
-                        "response.output_text.delta" -> {
-                            val delta = event.delta ?: continue
-                            synchronized(rawBuffer) { rawBuffer.append(delta) }
-                            for (dialog in parser.append(delta)) {
+                    // 畸形 data 行记录后跳过。
+                    val element = try {
+                        json.parseToJsonElement(payload)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        null
+                    }
+                    val obj = element as? JsonObject ?: continue
+
+                    when (val result = spec.parseSseData(obj)) {
+                        is SseParseResult.Delta -> {
+                            synchronized(rawBuffer) { rawBuffer.append(result.text) }
+                            for (dialog in parser.append(result.text)) {
                                 emit(ChatStreamEvent.DialogPart(dialog))
                             }
                         }
 
-                        "response.completed", "response.incomplete" ->
-                            return ChatStreamEvent.Completed(raw())
+                        SseParseResult.Done -> return ChatStreamEvent.Completed(raw())
 
-                        "response.failed" ->
-                            return ChatStreamEvent.Error(
-                                raw(),
-                                event.response?.error?.message ?: "上游返回错误",
-                            )
+                        is SseParseResult.Failed ->
+                            return ChatStreamEvent.Error(raw(), result.message)
+
+                        SseParseResult.Ignored -> Unit
                     }
                 }
             }
@@ -165,13 +188,71 @@ class ChatRepository {
         return ChatStreamEvent.Completed(raw())
     }
 
+    // 拉取模型列表；baseUrl/apiKey 取自当前编辑草稿，可与未保存表单一致。
+    suspend fun fetchModels(
+        provider: LlmProvider,
+        baseUrl: String,
+        apiKey: String,
+    ): ModelsResult = withContext(Dispatchers.IO) {
+        try {
+            // OpenAI 两种形态的模型列表端点一致，形态不影响。
+            val spec = specFor(provider, OpenAiApiType.RESPONSES)
+            val call = apiFor(baseUrl)
+                .getModels(spec.modelsUrl(), spec.headers(apiKey))
+                .withTestTimeout()
+            val response = call.execute()
+            if (!response.isSuccessful) {
+                ModelsResult.Failure(responseError(response))
+            } else {
+                val text = runCatching { response.body()?.string() }.getOrNull()
+                if (text == null) ModelsResult.Failure("服务器返回空响应")
+                else ModelsResult.Success(spec.parseModels(text))
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            ModelsResult.Failure(friendlyError(e))
+        }
+    }
+
+    // 连通性测试：向目标模型发一次极小的非流式真实请求。
+    suspend fun testConnection(settings: ChatSettings): ConnectionTestResult = withContext(Dispatchers.IO) {
+        try {
+            val spec = specFor(settings.provider, settings.apiType)
+            val call = apiFor(settings.baseUrl)
+                .post(
+                    spec.testUrl(settings.modelName),
+                    spec.headers(settings.apiKey),
+                    spec.buildTestBody(json, settings.modelName),
+                )
+                .withTestTimeout()
+            // 协程取消时联动断开，避免离开页面后请求悬挂。
+            currentCoroutineContext().job.invokeOnCompletion { call.cancel() }
+            val startAt = System.currentTimeMillis()
+            val response = call.execute()
+            val elapsed = System.currentTimeMillis() - startAt
+            if (!response.isSuccessful) {
+                ConnectionTestResult.Failure(responseError(response))
+            } else {
+                // HTTP 2xx 即视为连通成功，不解析响应体。
+                ConnectionTestResult.Success(elapsed)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            ConnectionTestResult.Failure(friendlyError(e))
+        }
+    }
+
+    // 测试类请求统一 30s 超时，避免长时间悬挂。
+    private fun <T> Call<T>.withTestTimeout(): Call<T> = apply {
+        timeout().timeout(30, TimeUnit.SECONDS)
+    }
+
     private fun apiFor(url: String): ChatApi {
         val baseUrl = if (url.endsWith("/")) url else "$url/"
         return cachedApi?.takeIf { cachedBaseUrl == baseUrl }
             ?: Retrofit.Builder()
                 .baseUrl(baseUrl)
                 .client(okHttpClient)
-                .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
                 .build()
                 .create(ChatApi::class.java)
                 .also {
@@ -180,17 +261,17 @@ class ChatRepository {
                 }
     }
 
-    // 畸形 data 行记录后跳过。
-    private fun decodeEvent(line: String): ResponsesStreamEvent? = try {
-        json.decodeFromString<ResponsesStreamEvent>(line.substring(5).trim())
-    } catch (e: Exception) {
-        e.printStackTrace()
-        null
-    }
-
     private fun raw(): String = synchronized(rawBuffer) { rawBuffer.toString() }
 
     private fun isUserCancel(call: Call<ResponseBody>): Boolean = cancelRequested || call.isCanceled()
+
+    private fun friendlyError(e: Exception): String = when (e) {
+        is SocketTimeoutException -> "连接超时"
+        is UnknownHostException -> "无法解析主机，请检查 BaseUrl"
+        is IllegalArgumentException -> "BaseUrl 格式不正确"
+        is IOException -> "网络连接失败，请检查网络或 BaseUrl"
+        else -> e.message ?: "请求失败"
+    }
 
     private fun httpErrorMessage(code: Int, errorBody: String?): String = when (code) {
         401 -> "API Key 无效或未授权"
@@ -198,6 +279,10 @@ class ChatRepository {
         in 500..599 -> "服务器错误"
         else -> extractErrorMessage(errorBody) ?: "请求失败（HTTP $code）"
     }
+
+    // 统一读取错误响应体并转换为友好文案。
+    private fun responseError(response: Response<ResponseBody>): String =
+        httpErrorMessage(response.code(), runCatching { response.errorBody()?.string() }.getOrNull())
 
     private fun extractErrorMessage(body: String?): String? {
         if (body.isNullOrBlank()) return null
