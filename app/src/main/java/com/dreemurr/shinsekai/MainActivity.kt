@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -37,11 +38,17 @@ import com.dreemurr.shinsekai.ui.navigation.ChatRoute
 import com.dreemurr.shinsekai.ui.navigation.NewSessionRoute
 import com.dreemurr.shinsekai.ui.navigation.SessionsRoute
 import com.dreemurr.shinsekai.ui.navigation.SettingsRoute
+import com.dreemurr.shinsekai.ui.navigation.VoiceCardEditRoute
+import com.dreemurr.shinsekai.ui.navigation.VoiceCloneRoute
+import com.dreemurr.shinsekai.ui.navigation.VoicesRoute
 import com.dreemurr.shinsekai.ui.navigation.rememberNavigationState
 import com.dreemurr.shinsekai.ui.newsession.NewSessionScreen
 import com.dreemurr.shinsekai.ui.sessions.SessionsScreen
 import com.dreemurr.shinsekai.ui.settings.SettingsScreen
 import com.dreemurr.shinsekai.ui.theme.ShinsekaiTheme
+import com.dreemurr.shinsekai.ui.voices.VoiceCardEditScreen
+import com.dreemurr.shinsekai.ui.voices.VoiceCloneScreen
+import com.dreemurr.shinsekai.ui.voices.VoicesScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,7 +70,7 @@ class MainActivity : ComponentActivity() {
 private fun AppRoot() {
     val state = rememberNavigationState(
         startRoute = SessionsRoute,
-        topLevelRoutes = setOf(SessionsRoute, CharactersRoute, SettingsRoute),
+        topLevelRoutes = setOf(SessionsRoute, CharactersRoute, VoicesRoute, SettingsRoute),
     )
     val navigator = remember { AppNavigator(state) }
 
@@ -76,6 +83,13 @@ private fun AppRoot() {
         }
         entry<CharactersRoute> {
             CharactersScreen(onOpenDetail = { navigator.navigate(CharacterDetailRoute(it)) })
+        }
+        entry<VoicesRoute> {
+            VoicesScreen(
+                onAddCard = { navigator.navigate(VoiceCardEditRoute("")) },
+                onOpenEdit = { navigator.navigate(VoiceCardEditRoute(it)) },
+                onClone = { navigator.navigate(VoiceCloneRoute) },
+            )
         }
         entry<SettingsRoute> { SettingsScreen() }
         entry<NewSessionRoute> {
@@ -97,6 +111,15 @@ private fun AppRoot() {
                 characterId = key.characterId,
                 onBack = { navigator.goBack() },
             )
+        }
+        entry<VoiceCardEditRoute> { key ->
+            VoiceCardEditScreen(
+                cardId = key.cardId,
+                onBack = { navigator.goBack() },
+            )
+        }
+        entry<VoiceCloneRoute> {
+            VoiceCloneScreen(onBack = { navigator.goBack() })
         }
     }
 
@@ -142,5 +165,6 @@ private data class TopLevelItem(
 private val TopLevelItems = listOf(
     TopLevelItem(SessionsRoute, R.string.tab_sessions, Icons.Filled.Home),
     TopLevelItem(CharactersRoute, R.string.tab_characters, Icons.Filled.Person),
+    TopLevelItem(VoicesRoute, R.string.tab_voices, Icons.Filled.PlayArrow),
     TopLevelItem(SettingsRoute, R.string.tab_settings, Icons.Filled.Settings),
 )

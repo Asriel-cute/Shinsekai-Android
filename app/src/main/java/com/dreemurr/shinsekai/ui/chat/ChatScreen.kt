@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.ui.chat
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -98,8 +99,16 @@ fun ChatScreen(
         },
     )
     val state by vm.state.collectAsStateWithLifecycle()
+    val toast by vm.toast.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showRecord by remember { mutableStateOf(false) }
     var input by rememberSaveable { mutableStateOf("") }
+
+    LaunchedEffect(toast) {
+        val message = toast ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        vm.consumeToast()
+    }
 
     Column(
         Modifier
@@ -491,6 +500,22 @@ private fun LineContent(state: ChatViewModel.UiState, visibleSpeech: StateFlow<S
     }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         when {
+            state.synthesizing -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    stringResource(R.string.chat_tts_synthesizing),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+
             !state.typing && state.queueSize == 0 && state.streaming ->
                 Text(
                     stringResource(R.string.chat_generating),

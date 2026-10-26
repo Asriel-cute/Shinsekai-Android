@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.ui.characters
 
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -28,8 +29,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -41,7 +40,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,6 +60,8 @@ import com.dreemurr.shinsekai.ui.common.EmptyState
 import com.dreemurr.shinsekai.ui.common.formatImportedAt
 import com.dreemurr.shinsekai.ui.common.spriteInfoText
 
+private const val RESOURCES_URL = "https://shinsekai.end0rph1n.icu/resources"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CharactersScreen(
@@ -70,11 +73,12 @@ fun CharactersScreen(
             initializer { CharactersViewModel(container) }
         },
     )
+    val context = LocalContext.current
     val resources = LocalResources.current
+    val uriHandler = LocalUriHandler.current
     val characters by vm.characters.collectAsStateWithLifecycle()
     val importing by vm.importing.collectAsStateWithLifecycle()
     val importUi by vm.importUi.collectAsStateWithLifecycle()
-    val snackbarHostState = remember { SnackbarHostState() }
     var deleteTarget by remember { mutableStateOf<Character?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
@@ -83,15 +87,21 @@ fun CharactersScreen(
 
     LaunchedEffect(importUi) {
         // NeedsDecision 留给冲突弹窗，不在这里消费。
-        val text = when (val ui = importUi) {
-            is CharactersViewModel.ImportUi.Success ->
-                resources.getString(R.string.import_success_format, ui.count) +
+        // 导入结果经系统 Toast 提示：带警告或失败用长时，纯成功用短时。
+        when (val ui = importUi) {
+            is CharactersViewModel.ImportUi.Success -> {
+                val text = resources.getString(R.string.import_success_format, ui.count) +
                     if (ui.warnings.isEmpty()) "" else "：" + ui.warnings.joinToString("；")
+                val duration =
+                    if (ui.warnings.isEmpty()) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+                Toast.makeText(context, text, duration).show()
+            }
 
-            is CharactersViewModel.ImportUi.Failure -> resources.getString(ui.messageRes)
+            is CharactersViewModel.ImportUi.Failure ->
+                Toast.makeText(context, resources.getString(ui.messageRes), Toast.LENGTH_LONG).show()
+
             else -> return@LaunchedEffect
         }
-        snackbarHostState.showSnackbar(text)
         vm.consumeImportUi()
     }
 
@@ -100,6 +110,18 @@ fun CharactersScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.characters_title)) },
                 actions = {
+                    TextButton(
+                        onClick = {
+                            runCatching { uriHandler.openUri(RESOURCES_URL) }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        R.string.err_open_link,
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                        },
+                    ) { Text(stringResource(R.string.action_download)) }
                     TextButton(
                         onClick = {
                             importLauncher.launch(
@@ -116,7 +138,6 @@ fun CharactersScreen(
                 },
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         Box(
             Modifier

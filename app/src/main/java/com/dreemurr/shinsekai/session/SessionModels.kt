@@ -9,6 +9,9 @@ data class ChatSession(
     val id: String,
     val title: String,
     val characterIds: List<String>,
+    // 新建会话时的语言快照：characterId → zh/ja/en。
+    // 空串=自动；键缺失=无快照，跳过云 TTS。
+    val voiceLanguages: Map<String, String> = emptyMap(),
     val scenario: String,
     val history: List<SessionEntry>, // 首条为 system 提示词快照。
     val createdAt: Long,

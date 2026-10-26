@@ -38,11 +38,15 @@ class SessionRepository(
     suspend fun create(
         characters: List<Character>,
         scenario: String,
+        voiceLanguages: Map<String, String> = emptyMap(),
     ): ChatSession = mutex.withLock {
         withContext(io) {
             val now = System.currentTimeMillis()
             val names = characters.map { it.name }
-            val system = TemplateGenerator.generate(characters)
+            val ids = characters.map { it.id }
+            val idSet = ids.toSet()
+            val voiceSnapshot = voiceLanguages.filterKeys { it in idSet }
+            val system = TemplateGenerator.generate(characters, voiceSnapshot)
             val session = ChatSession(
                 id = UUID.randomUUID().toString(),
                 title = if (names.size <= 2) {
@@ -50,7 +54,8 @@ class SessionRepository(
                 } else {
                     names.take(2).joinToString("、") + " 等 ${names.size} 人"
                 },
-                characterIds = characters.map { it.id },
+                characterIds = ids,
+                voiceLanguages = voiceSnapshot,
                 scenario = scenario,
                 history = listOf(
                     SessionEntry(

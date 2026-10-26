@@ -17,6 +17,7 @@
     <!-- 底部导航 -->
     <string name="tab_sessions">会话</string>
     <string name="tab_characters">角色</string>
+    <string name="tab_voices">语音</string>
     <string name="tab_settings">设置</string>
 
     <!-- 会话列表 -->
@@ -38,7 +39,7 @@
     <string name="new_session_scenario_hint">描述这次对话的背景与开场情景，可留空</string>
     <string name="action_start_chat">开始对话</string>
     <string name="new_session_empty_title">还没有可选的角色</string>
-    <string name="new_session_empty_body">先到「角色」页导入 .char 角色包，再来开始对话</string>
+    <string name="new_session_empty_body">先到「角色」页导入.char角色包，再来开始对话</string>
     <string name="action_go_import">去导入</string>
     <string name="character_info_format">立绘 %1$d 张 · 语音 %2$d 条</string>
     <string name="character_no_sprites">无立绘</string>
@@ -50,19 +51,25 @@
     <string name="chat_first_input_hint">请先输入你的第一句话</string>
     <string name="chat_generating">生成中…</string>
     <string name="chat_input_hint">输入你的台词…</string>
-    <string name="chat_not_configured_title">未配置 API</string>
-    <string name="chat_not_configured_body">请先在设置中填写 BaseUrl 与模型名称</string>
+    <string name="chat_not_configured_title">未配置API</string>
+    <string name="chat_not_configured_body">请先在设置中填写BaseUrl与模型名称</string>
     <string name="action_go_settings">去设置</string>
     <string name="action_back_to_input">返回输入</string>
     <string name="record_empty">还没有对话记录</string>
     <string name="record_incomplete">未完成</string>
     <string name="record_user_label">你</string>
+    <string name="chat_tts_failed_format">语音合成失败：%1$s</string>
+    <string name="chat_tts_missing_translation_format">部分台词缺少目标语言译文，已跳过语音：%1$s</string>
+    <string name="chat_tts_synthesizing">语音准备中…</string>
+    <string name="chat_tts_save_failed">音频保存失败</string>
+    <string name="chat_tts_unknown_error">未知错误</string>
 
     <!-- 角色页 -->
     <string name="characters_title">角色</string>
+    <string name="action_download">下载</string>
     <string name="action_import">导入</string>
     <string name="characters_empty_title">还没有角色</string>
-    <string name="characters_empty_body">点右上角「导入」，选择 .char 角色包</string>
+    <string name="characters_empty_body">点右上角「导入」，选择.char角色包</string>
     <string name="import_success_format">导入成功，共 %1$d 个角色</string>
     <string name="import_conflict_title">发现同名角色</string>
     <string name="import_conflict_body">以下角色与已导入的角色同名，请选择处理方式：</string>
@@ -70,12 +77,13 @@
     <string name="action_overwrite">覆盖</string>
     <string name="action_keep_both">保留两者</string>
     <string name="err_not_a_zip">不是有效的角色包（ZIP）</string>
-    <string name="err_missing_yaml">包内未找到 character.yaml</string>
+    <string name="err_missing_yaml">包内未找到character.yaml</string>
     <string name="err_malformed_yaml">character.yaml 解析失败</string>
     <string name="err_empty_package">包内没有可导入的角色</string>
     <string name="err_broken_archive">角色包已损坏或压缩格式不受支持</string>
     <string name="err_session_not_found">导入会话已失效，请重新选择文件</string>
     <string name="err_io">读取文件失败</string>
+    <string name="err_open_link">无法打开浏览器</string>
 
     <!-- 角色详情 -->
     <string name="character_panel_basic_info">基本信息</string>
@@ -86,6 +94,13 @@
     <string name="character_emotion_tags">情绪标签</string>
     <string name="character_sprites">立绘</string>
     <string name="character_value_none">（无）</string>
+    <string name="character_panel_voice">角色声音</string>
+    <string name="character_voice_card">声音卡片</string>
+    <string name="character_voice_unbound">未绑定</string>
+    <string name="character_voice_pick_title">选择角色声音</string>
+    <string name="character_voice_no_cards">还没有角色声音，请先到「语音」页添加或克隆。</string>
+    <string name="character_voice_pick_none">解除绑定</string>
+    <string name="character_voice_language_hint">语音语言与翻译规则在新建会话时写入提示词，修改后请新建会话。</string>
     <string name="delete_character_title">删除角色</string>
     <string name="delete_character_body">删除后不影响已有会话，但其中的立绘与语音将不可用。确定删除吗？</string>
 
@@ -121,4 +136,59 @@
     <string name="effort_low">低</string>
     <string name="effort_high">高</string>
     <string name="effort_max">最高</string>
+
+    <!-- 语音页 -->
+    <string name="voices_title">语音</string>
+    <string name="action_add">添加</string>
+    <string name="action_clone">克隆</string>
+    <string name="voices_empty_title">还没有角色声音</string>
+    <string name="voices_empty_body">点右上角「添加」手动配置，或用「克隆」导入 .voice 语音包复刻音色</string>
+    <string name="provider_aliyun">阿里百炼</string>
+    <string name="provider_minimax">MiniMax</string>
+    <string name="voice_card_no_model">未设置模型</string>
+    <string name="delete_voice_title">删除角色声音</string>
+    <string name="delete_voice_body_format">「%1$s」的删除方式：\n普通删除仅移除本地卡片；\n彻底删除会同时删除服务商云端的克隆音色。</string>
+    <string name="action_delete_local">普通删除</string>
+    <string name="action_delete_purge">彻底删除</string>
+    <string name="voice_delete_cloud_failed_format">云端删除失败：%1$s（本地卡片已保留）</string>
+    <string name="voice_deleted">已删除</string>
+
+    <!-- 声音卡片表单 -->
+    <string name="voice_add_title">添加角色声音</string>
+    <string name="voice_edit_title">编辑角色声音</string>
+    <string name="voice_clone_title">克隆角色声音</string>
+    <string name="voice_panel_import">语音包</string>
+    <string name="voice_panel_connect">服务连接</string>
+    <string name="voice_panel_voice">模型与音色</string>
+    <string name="voice_panel_source">克隆素材</string>
+    <string name="voice_field_name">角色名</string>
+    <string name="voice_field_provider">TTS 服务商</string>
+    <string name="voice_field_base_url">BaseUrl</string>
+    <string name="voice_field_api_key">API Key</string>
+    <string name="voice_field_model">模型名称</string>
+    <string name="voice_model_hint_aliyun">如cosyvoice-v3.5-plus</string>
+    <string name="voice_model_hint_minimax">如 speech-2.8-hd</string>
+    <string name="voice_field_voice_id">Voice ID</string>
+    <string name="voice_voice_id_minimax_hint">自定义8~256位，字母开头，仅字母数字与 - _</string>
+    <string name="voice_field_language">语音语言</string>
+    <string name="voice_lang_auto">自动</string>
+    <string name="voice_lang_zh">中文</string>
+    <string name="voice_lang_ja">日本語</string>
+    <string name="voice_lang_en">English</string>
+    <string name="voice_lang_clone_hint">复刻与合成共用；导入 .voice 时自动填入</string>
+    <string name="voice_lang_edit_hint">修改仅对新建会话的翻译目标生效</string>
+    <string name="voice_lang_unsupported_format">导入完成；语音包语言「%1$s」暂不支持，已设为自动</string>
+    <string name="action_fetch_voices">获取音色</string>
+    <string name="voice_picker_title">选择音色</string>
+    <string name="voice_picker_filter_hint">输入关键字过滤</string>
+    <string name="voice_picker_empty">没有可选音色，可关闭后手动输入</string>
+    <string name="voice_picker_error_format">获取失败：%1$s</string>
+    <string name="action_pick_audio">选择</string>
+    <string name="voice_field_clone_audio">克隆音频</string>
+    <string name="voice_field_prompt_audio">参考音频（可选）</string>
+    <string name="voice_field_prompt_text">参考文字（可选）</string>
+    <string name="voice_field_prompt_text_hint">与参考音频内容一致的文字，可提升音色相似度</string>
+    <string name="action_import_voice">一键导入.voice语音包</string>
+    <string name="action_start_clone">开始克隆</string>
+    <string name="voice_cloning">克隆中…</string>
 </resources>

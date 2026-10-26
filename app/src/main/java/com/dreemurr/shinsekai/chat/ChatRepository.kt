@@ -31,13 +31,11 @@ sealed interface ChatStreamEvent {
     data class Error(val rawText: String, val message: String) : ChatStreamEvent
 }
 
-// 模型列表拉取结果。
 sealed interface ModelsResult {
     data class Success(val models: List<String>) : ModelsResult
     data class Failure(val message: String) : ModelsResult
 }
 
-// 连通性测试结果。
 sealed interface ConnectionTestResult {
     data class Success(val elapsedMs: Long) : ConnectionTestResult
     data class Failure(val message: String) : ConnectionTestResult

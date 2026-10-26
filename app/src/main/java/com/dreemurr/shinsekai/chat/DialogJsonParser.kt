@@ -83,6 +83,7 @@ class DialogJsonParser {
                 // 保留 "01" 等原始编号，缺失或 null 回退 -1。
                 sprite = (obj["sprite"] as? JsonPrimitive)?.contentOrNull ?: "-1",
                 speech = (obj["speech"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                translate = (obj["translate"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
             )
         }
     }

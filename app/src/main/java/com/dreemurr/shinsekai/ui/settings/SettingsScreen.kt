@@ -39,6 +39,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -80,9 +81,7 @@ fun SettingsScreen() {
     val modelsState by vm.modelsState.collectAsStateWithLifecycle()
     val testState by vm.testState.collectAsStateWithLifecycle()
 
-    // 只初始化一次，持久化回写不覆盖正在编辑的内容。
-    // 首帧直接用已就绪的仓库数据，避免先渲染空表单再整体回填造成二次重组
-    // 与输入框浮动标签动画并发掉帧；仓库尚未加载完（占位值）时才退回异步回填。
+    // 只初始化一次；已就绪时首帧直接使用仓库数据，避免空表单闪动与浮动标签动画掉帧。
     var form by remember { mutableStateOf(saved) }
     var initialized by remember { mutableStateOf(saved != AllProviderSettings()) }
     var showKey by remember { mutableStateOf(false) }
@@ -121,9 +120,8 @@ fun SettingsScreen() {
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // API 服务配置 Panel
             SettingsPanel(stringResource(R.string.settings_panel_api)) {
-                // 提供商选择：切换表单内容与激活项，各提供商草稿独立
+                // 提供商选择：切换表单内容与激活项，各提供商草稿独立。
                 LabeledSegmentedRow(
                     label = stringResource(R.string.settings_provider_label),
                     options = ProviderOptions,
@@ -131,7 +129,7 @@ fun SettingsScreen() {
                     onSelect = { form = form.copy(activeProvider = it) },
                 )
 
-                // OpenAI 两种接口形态，共用同一套连接配置
+                // OpenAI 两种接口形态，共用同一套连接配置。
                 if (activeProvider == LlmProvider.OPENAI) {
                     LabeledSegmentedRow(
                         label = stringResource(R.string.settings_api_type_label),
@@ -141,57 +139,62 @@ fun SettingsScreen() {
                     )
                 }
 
-                OutlinedTextField(
-                    value = config.baseUrl,
-                    onValueChange = { value ->
-                        updateConfig(activeProvider) { it.copy(baseUrl = value) }
-                    },
-                    label = { Text(stringResource(R.string.settings_base_url_label)) },
-                    supportingText = {
-                        Text(
-                            stringResource(
-                                when (activeProvider) {
-                                    LlmProvider.OPENAI -> R.string.settings_base_url_hint_openai
-                                    LlmProvider.ANTHROPIC -> R.string.settings_base_url_hint_anthropic
-                                    LlmProvider.GOOGLE -> R.string.settings_base_url_hint_google
-                                },
-                            ),
-                        )
-                    },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // 提供商切换时输入框成组换值，key 重建让 label 首帧到位，避免浮动标签动画。
+                key(activeProvider) {
+                    OutlinedTextField(
+                        value = config.baseUrl,
+                        onValueChange = { value ->
+                            updateConfig(activeProvider) { it.copy(baseUrl = value) }
+                        },
+                        label = { Text(stringResource(R.string.settings_base_url_label)) },
+                        supportingText = {
+                            Text(
+                                stringResource(
+                                    when (activeProvider) {
+                                        LlmProvider.OPENAI -> R.string.settings_base_url_hint_openai
+                                        LlmProvider.ANTHROPIC -> R.string.settings_base_url_hint_anthropic
+                                        LlmProvider.GOOGLE -> R.string.settings_base_url_hint_google
+                                    },
+                                ),
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
 
-                OutlinedTextField(
-                    value = config.apiKey,
-                    onValueChange = { value ->
-                        updateConfig(activeProvider) { it.copy(apiKey = value) }
-                    },
-                    label = { Text(stringResource(R.string.settings_api_key_label)) },
-                    supportingText = { Text(stringResource(R.string.settings_api_key_hint)) },
-                    singleLine = true,
-                    visualTransformation =
-                        if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        TextButton(onClick = { showKey = !showKey }) {
-                            Text(stringResource(if (showKey) R.string.action_hide else R.string.action_show))
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    OutlinedTextField(
+                        value = config.apiKey,
+                        onValueChange = { value ->
+                            updateConfig(activeProvider) { it.copy(apiKey = value) }
+                        },
+                        label = { Text(stringResource(R.string.settings_api_key_label)) },
+                        supportingText = { Text(stringResource(R.string.settings_api_key_hint)) },
+                        singleLine = true,
+                        visualTransformation =
+                            if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            TextButton(onClick = { showKey = !showKey }) {
+                                Text(stringResource(if (showKey) R.string.action_hide else R.string.action_show))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
 
-            // 模型与推理配置 Panel
             SettingsPanel(stringResource(R.string.settings_panel_model)) {
-                OutlinedTextField(
-                    value = config.modelName,
-                    onValueChange = { value ->
-                        updateConfig(activeProvider) { it.copy(modelName = value) }
-                    },
-                    label = { Text(stringResource(R.string.settings_model_label)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // 同上，模型名随提供商切换整体换值，key 重建避免 label 浮动动画。
+                key(activeProvider) {
+                    OutlinedTextField(
+                        value = config.modelName,
+                        onValueChange = { value ->
+                            updateConfig(activeProvider) { it.copy(modelName = value) }
+                        },
+                        label = { Text(stringResource(R.string.settings_model_label)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
                 OutlinedButton(
                     onClick = {
@@ -214,7 +217,7 @@ fun SettingsScreen() {
                 )
             }
 
-            // 连通性测试：对当前编辑草稿发起一次真实小请求，结果经系统 Toast 提示
+            // 连通性测试：对当前编辑草稿发起一次真实小请求，结果经系统 Toast 提示。
             OutlinedButton(
                 onClick = {
                     scope.launch {
@@ -373,7 +376,6 @@ private fun ModelPickerDialog(
     )
 }
 
-// 设置页统一分组卡片：边框样式 + 标题 + 垂直内容。
 @Composable
 private fun SettingsPanel(
     title: String,
@@ -402,7 +404,6 @@ private fun SettingsPanel(
     }
 }
 
-// 通用的「标签 + 单选分段按钮」组。
 @Composable
 private fun <T> LabeledSegmentedRow(
     label: String,

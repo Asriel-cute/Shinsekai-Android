@@ -25,6 +25,9 @@ private val jsonMediaType = "application/json".toMediaType()
 // 连通性测试的极小提示词。
 private const val TEST_PROMPT = "只回复两个字符:ok"
 
+// 连通性测试的输出硬上限：16 是 Responses API 的最小允许值；只判定 2xx，截断无影响。
+private const val TEST_MAX_OUTPUT_TOKENS = 16
+
 /** 提供商差异的完整封装：端点、鉴权、请求体与各类响应解析。 */
 internal interface ProviderSpec {
     /** 流式对话端点（相对 baseUrl）。 */
@@ -97,9 +100,9 @@ private fun systemText(history: List<InputItem>): String? = history
 private fun parseModelIds(body: String): List<String> =
     parseObj(body)?.arr("data")?.objs()?.mapNotNull { it.str("id") }?.sorted() ?: emptyList()
 
-// ---- OpenAI Responses（原实现平移）----
+// ---- OpenAI Responses ----
 
-// none 也显式发送。
+// none 也显式发送，关闭服务端默认思考。
 @Serializable
 private data class Reasoning(val effort: ReasoningEffort)
 
@@ -126,6 +129,9 @@ private data class ResponsesTestRequest(
     val model: String,
     val input: List<InputItem>,
     val stream: Boolean = false,
+    // 与聊天默认档位一致；显式关闭思考，避免测试被推理 token 放大。
+    val reasoning: Reasoning = Reasoning(ReasoningEffort.none),
+    @SerialName("max_output_tokens") val maxOutputTokens: Int = TEST_MAX_OUTPUT_TOKENS,
 )
 
 internal object ResponsesSpec : ProviderSpec {
@@ -189,6 +195,8 @@ private data class ChatCompletionsTestRequest(
     val model: String,
     val messages: List<ChatCompletionsRequest.Message>,
     val stream: Boolean = false,
+    // 含推理 token 的总上限；不传 reasoning_effort，避免非推理模型/兼容网关返回 400。
+    @SerialName("max_completion_tokens") val maxCompletionTokens: Int = TEST_MAX_OUTPUT_TOKENS,
 )
 
 internal object ChatCompletionsSpec : ProviderSpec {
@@ -259,7 +267,7 @@ private data class AnthropicTestRequest(
     val model: String,
     val messages: List<AnthropicRequest.Message>,
     val stream: Boolean = false,
-    @SerialName("max_tokens") val maxTokens: Long = 16,
+    @SerialName("max_tokens") val maxTokens: Long = TEST_MAX_OUTPUT_TOKENS.toLong(),
 )
 
 internal object AnthropicSpec : ProviderSpec {
@@ -354,7 +362,12 @@ private data class GoogleRequest(
 @Serializable
 private data class GoogleTestRequest(
     val contents: List<GoogleRequest.Content>,
-)
+    // 只限制输出（含 thought token）；不传 thinkingConfig，兼容不能关闭思考的型号。
+    val generationConfig: GenerationConfig = GenerationConfig(),
+) {
+    @Serializable
+    data class GenerationConfig(val maxOutputTokens: Int = TEST_MAX_OUTPUT_TOKENS)
+}
 
 internal object GoogleSpec : ProviderSpec {
     override fun streamUrl(model: String) =

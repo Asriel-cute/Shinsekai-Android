@@ -1,6 +1,7 @@
 package com.dreemurr.shinsekai.template
 
 import com.dreemurr.shinsekai.character.Character
+import com.dreemurr.shinsekai.voice.VoiceLanguages
 
 // 无 Android 依赖；仅在新建会话时拼装提示词。
 object TemplateGenerator {
@@ -8,12 +9,24 @@ object TemplateGenerator {
     // composeForLlm 会 removeSuffix 后重新追加，两处必须完全一致，故保留为常量。
     private const val JSON_REMINDER = "必须以规定的 JSON 格式回复。"
 
-    fun generate(characters: List<Character>): String {
+    fun generate(
+        characters: List<Character>,
+        voiceLanguages: Map<String, String> = emptyMap(),
+    ): String {
         require(characters.isNotEmpty()) { "生成模板至少需要一个角色" }
 
         val names = characters.joinToString("，") { it.name }
         val (spriteChars, plainChars) = characters.partition { it.sprites.isNotEmpty() }
         val settingChars = characters.filter { it.characterSetting.isNotBlank() }
+        // 仅非中文目标需要 translate；按角色 id 取会话创建时的语言快照。
+        val translationTargets = characters.mapNotNull { character ->
+            val name = when (VoiceLanguages.normalize(voiceLanguages[character.id])) {
+                VoiceLanguages.JA -> "日语"
+                VoiceLanguages.EN -> "英语"
+                else -> return@mapNotNull null
+            }
+            character.name to name
+        }
 
         // 1536 为固定文案的容量预估，减少拼装时扩容。
         return buildString(
@@ -23,7 +36,7 @@ object TemplateGenerator {
             appendJsonContract(spriteChars.isNotEmpty())
             appendSpriteGuide(spriteChars)
             appendCharacterSettings(settingChars)
-            appendRequirements(names, spriteChars, plainChars)
+            appendRequirements(names, spriteChars, plainChars, translationTargets)
             append('\n')
             append("请开始对话, 开始时介绍下用户所处的情境和背景, 以及在做什么事情:").append("\n\n")
             append(JSON_REMINDER).append('\n')
@@ -50,6 +63,7 @@ object TemplateGenerator {
                 "name": "角色名",
                 "sprite": "${if (hasSprites) "str, 对应的立绘ID字符串，例如 01, 02" else "str, 固定为 -1"}",
                 "speech": "该角色说的简体中文台词",
+                "translate": "目标语言译文（仅合成用，无翻译要求的角色省略）"
                 }
             ]
             }""".trimIndent(),
@@ -81,18 +95,28 @@ object TemplateGenerator {
         names: String,
         spriteChars: List<Character>,
         plainChars: List<Character>,
+        translationTargets: List<Pair<String, String>>,
     ) {
         append("要求：\n")
         rule("格式严格：输出内容必须严格且仅为 JSON 格式，不得包含任何附加的解释、说明或问候语。")
         rule("角色名限制：name 字段只能是以下之一：$names 以及其他可能出现的人物名，或者固定关键字：旁白。")
         appendSpriteRules(spriteChars, plainChars)
-        rule("台词风格：speech 字段中的台词须为简体中文，内容须严格符合角色个性、说话方式与背景设定。")
-        rule("台词纯净：speech 字段只能包含角色实际说出口的台词，不得混入动作、表情、心理等描写，也不得用括号（如「（微笑）」「（心想）」）或星号包住描写；这类内容只能由旁白条目表达。")
+        rule("台词风格：speech 字段中的台词须为简体中文，内容尽量符合角色个性、说话方式与背景设定。")
+        appendTranslationRules(translationTargets)
         // 仅提示模型按句意拆条，不在前端截断。
-        rule("篇幅控制：每个元素的 speech 字段不超过 500 字左右；内容多时必须按句意拆成多个元素，即同一角色连续说话就拆成多个元素。")
+        rule("篇幅控制：每个元素的 speech 字段不超过 500 字左右；内容多时必须按句意拆成多个元素，即同一角色连续说话或中间情绪变化就拆成多个元素。")
         rule("数组结构：所有对话和事件必须按时间顺序放入 dialog 数组中，数组中至少包含两个元素。")
         rule("旁白用途：旁白元素用于描写场景变化、人物动作、心理活动和环境气氛。")
         rule("旁白节制：除开场介绍外，旁白只用于必要的场景变化、动作和心理活动；能由台词表达的内容尽量不要写旁白，也不要连续输出多条旁白。")
+    }
+
+    private fun StringBuilder.appendTranslationRules(targets: List<Pair<String, String>>) {
+        if (targets.isEmpty()) return
+        val grouped = targets.groupBy({ it.second }, { it.first })
+            .entries
+            .joinToString("；") { (language, names) -> "${names.joinToString("、")}→$language" }
+        rule("翻译字段：$grouped。上述角色每条台词必须输出非空 translate，内容须为该句 speech 的目标语言译文，仅用于语音合成；不得包含动作、表情、心理、旁白、角色名或解释，不得增删改写。")
+        rule("翻译范围：未列出的角色、旁白、陌生角色及 speech 为空的条目不填 translate；speech 仍须为简体中文。")
     }
 
     private fun StringBuilder.appendSpriteRules(spriteChars: List<Character>, plainChars: List<Character>) {

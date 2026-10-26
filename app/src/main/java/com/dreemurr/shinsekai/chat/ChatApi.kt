@@ -28,7 +28,6 @@ interface ChatApi {
         @Body body: RequestBody,
     ): Call<ResponseBody>
 
-    // 模型列表。
     @GET
     fun getModels(
         @Url url: String,

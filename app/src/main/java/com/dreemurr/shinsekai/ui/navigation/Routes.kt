@@ -10,6 +10,9 @@ data object SessionsRoute : NavKey
 data object CharactersRoute : NavKey
 
 @Serializable
+data object VoicesRoute : NavKey
+
+@Serializable
 data object SettingsRoute : NavKey
 
 @Serializable
@@ -20,3 +23,9 @@ data class ChatRoute(val sessionId: String) : NavKey
 
 @Serializable
 data class CharacterDetailRoute(val characterId: String) : NavKey
+
+@Serializable
+data class VoiceCardEditRoute(val cardId: String) : NavKey
+
+@Serializable
+data object VoiceCloneRoute : NavKey

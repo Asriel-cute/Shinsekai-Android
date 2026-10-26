@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-// 模型列表拉取状态。
 sealed interface ModelsUiState {
     data object Idle : ModelsUiState
     data object Loading : ModelsUiState

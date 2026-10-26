@@ -220,7 +220,7 @@ internal class CharacterStore(private val rootDir: File) {
     }
 }
 
-// 预编译文件名清洗规则。
+// 文件名清洗规则（正则预编译）。
 private val ILLEGAL_FILE_NAME_CHARS = Regex("[\\x00-\\x1f<>:\"/\\\\|?*]")
 
 private fun cleanFileName(raw: String): String {

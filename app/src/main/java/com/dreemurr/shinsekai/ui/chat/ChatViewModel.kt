@@ -2,6 +2,7 @@ package com.dreemurr.shinsekai.ui.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.dreemurr.shinsekai.R
 import com.dreemurr.shinsekai.character.Character
 import com.dreemurr.shinsekai.chat.ChatStreamEvent
 import com.dreemurr.shinsekai.chat.Dialog
@@ -11,15 +12,26 @@ import com.dreemurr.shinsekai.di.AppContainer
 import com.dreemurr.shinsekai.session.ChatSession
 import com.dreemurr.shinsekai.session.SessionEntry
 import com.dreemurr.shinsekai.settings.SettingsRepository
+import com.dreemurr.shinsekai.voice.SynthResult
+import com.dreemurr.shinsekai.voice.TtsProvider
+import com.dreemurr.shinsekai.voice.TtsRepository
+import com.dreemurr.shinsekai.voice.VoiceCard
+import com.dreemurr.shinsekai.voice.VoiceLanguages
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 // 流终止即落盘，不等待播放；销毁时用 applicationScope 补存残片。
@@ -60,6 +72,8 @@ class ChatViewModel(
         val typing: Boolean = false,
         val queueSize: Int = 0,
         val streaming: Boolean = false,
+        // 云语音合成等待中：期间点击不推进，台词待音频就绪再展示。
+        val synthesizing: Boolean = false,
         val sprite: SpriteView? = null,
         val error: String? = null,
         val notConfigured: Boolean = false,
@@ -73,6 +87,14 @@ class ChatViewModel(
     private val _visibleSpeech = MutableStateFlow("")
     val visibleSpeech = _visibleSpeech.asStateFlow()
 
+    // 一次性提示（语音失败/缺译文汇总等）。
+    private val _toast = MutableStateFlow<String?>(null)
+    val toast: StateFlow<String?> = _toast.asStateFlow()
+
+    fun consumeToast() {
+        _toast.value = null
+    }
+
     // 错误留到队列播完后展示。
     private sealed interface Terminal {
         data object Done : Terminal
@@ -81,12 +103,43 @@ class ChatViewModel(
     }
 
     private val charactersByName = mutableMapOf<String, Character>()
-    private val queue = ArrayDeque<Dialog>()
+
+    // 新建会话时的语言快照；缺失条目静默跳过云 TTS，不回退当前卡片。
+    private var sessionVoiceLanguages: Map<String, String> = emptyMap()
+
+    // 云语音任务：只有需要合成时才创建，pending 在完成后给出音频文件（null = 失败/无音频）。
+    private class CloudJob(
+        val card: VoiceCard,
+        val provider: TtsProvider,
+        val audioFile: File,
+        val text: String,
+        val language: String?,
+        val pending: CompletableDeferred<File?> = CompletableDeferred(),
+    )
+
+    // 队列元素：boundCard 非空即由绑定卡片承担语音，合成跳过时也抑制本地立绘语音。
+    private class QueuedDialog(
+        val dialog: Dialog,
+        val boundCard: VoiceCard? = null,
+        val cloud: CloudJob? = null,
+    )
+
+    private val queue = ArrayDeque<QueuedDialog>()
     private val spriteMemory = mutableMapOf<String, Int>()
     private var terminal: Terminal? = null
     private var parsedAnyDialog = false
     private var streamJob: Job? = null
     private var typewriterJob: Job? = null
+
+    // 云语音：流中全量串行预取，推进时等待就绪（展示前阻塞）。
+    private var prefetchChannel = Channel<CloudJob>(Channel.UNLIMITED)
+    private var prefetchJob: Job? = null
+    private var advanceJob: Job? = null
+    private var dialogSeq = 0
+    private val ttsFailureMessages = LinkedHashSet<String>()
+    private val ttsMissingTranslationNames = LinkedHashSet<String>()
+    private val ttsDir = File(container.appContext.cacheDir, "tts")
+    private var lastCloudAudio: File? = null
 
     init {
         // 等启动加载完成，再回放历史重建立绘记忆。
@@ -94,6 +147,7 @@ class ChatViewModel(
             container.ready.first { it }
             val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId }
             if (session != null) {
+                sessionVoiceLanguages = session.voiceLanguages
                 val byId = characterRepo.characters.value.associateBy { it.id }
                 for (id in session.characterIds) {
                     val character = byId[id] ?: continue
@@ -109,6 +163,7 @@ class ChatViewModel(
                 .mapNotNull { list -> list.firstOrNull { it.id == sessionId } }
                 .distinctUntilChanged()
                 .collect { session ->
+                    sessionVoiceLanguages = session.voiceLanguages
                     _state.update { it.copy(title = session.title, history = session.history) }
                 }
         }
@@ -141,6 +196,8 @@ class ChatViewModel(
     }
 
     fun onBoxTap() {
+        // 语音合成等待期间点击不推进（无跳过）。
+        if (_state.value.synthesizing) return
         if (_state.value.typing) {
             completeTypewriter()
             return
@@ -150,18 +207,56 @@ class ChatViewModel(
             return
         }
         when (val result = terminal) {
-            Terminal.Done, Terminal.Stopped ->
+            Terminal.Done, Terminal.Stopped -> {
+                flushTtsNotices()
                 _state.update { it.copy(phase = Phase.WaitingInput) }
+            }
 
-            is Terminal.Failed ->
+            is Terminal.Failed -> {
+                flushTtsNotices()
                 _state.update { it.copy(phase = Phase.Error, error = result.message) }
+            }
 
             null -> Unit // 流未结束，等待新 dialog。
         }
     }
 
+    // 队列播完后一次性提示本轮云语音失败/缺译文；不打断阅读，不进 Error。
+    private fun flushTtsNotices() {
+        if (ttsFailureMessages.isEmpty() && ttsMissingTranslationNames.isEmpty()) {
+            return
+        }
+        val notices = buildList {
+            if (ttsFailureMessages.isNotEmpty()) {
+                add(
+                    container.appContext.getString(
+                        R.string.chat_tts_failed_format,
+                        ttsFailureMessages.take(3).joinToString("；"),
+                    ),
+                )
+            }
+            if (ttsMissingTranslationNames.isNotEmpty()) {
+                add(
+                    container.appContext.getString(
+                        R.string.chat_tts_missing_translation_format,
+                        ttsMissingTranslationNames.take(3).joinToString("、"),
+                    ),
+                )
+            }
+        }
+        clearTtsNotices()
+        _toast.value = notices.joinToString("；")
+    }
+
+    private fun clearTtsNotices() {
+        ttsFailureMessages.clear()
+        ttsMissingTranslationNames.clear()
+    }
+
     override fun onCleared() {
         typewriterJob?.cancel()
+        advanceJob?.cancel()
+        prefetchChannel.close()
         val snapshot = _state.value
         chatRepo.cancel()
         if (snapshot.phase == Phase.Streaming || snapshot.phase == Phase.Playing) {
@@ -172,6 +267,7 @@ class ChatViewModel(
             }
         }
         voicePlayer.release()
+        cleanTtsFiles()
     }
 
     private fun checkConfigured(): Boolean {
@@ -183,6 +279,13 @@ class ChatViewModel(
     private fun startStream() {
         streamJob?.cancel()
         chatRepo.cancel() // 兜底清理残留连接
+        advanceJob?.cancel()
+        prefetchJob?.cancel()
+        prefetchChannel.close()
+        prefetchChannel = Channel(Channel.UNLIMITED)
+        dialogSeq = 0
+        clearTtsNotices()
+        cleanTtsFiles() // 上一轮残留的合成音频不再可用
         queue.clear()
         terminal = null
         parsedAnyDialog = false
@@ -192,14 +295,18 @@ class ChatViewModel(
                 streaming = true,
                 error = null,
                 queueSize = 0,
+                synthesizing = false,
             )
         }
+        // 串行合成消费者：逐条请求云 TTS，避免并发触发限流。
+        prefetchJob = viewModelScope.launch { consumePrefetch() }
         streamJob = viewModelScope.launch {
             val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId }
             if (session == null) {
                 _state.update { it.copy(streaming = false, phase = Phase.Error, error = "会话不存在") }
                 return@launch
             }
+            sessionVoiceLanguages = session.voiceLanguages
             val settings = container.settingsRepository.settings.value
             chatRepo.getChatStream(settings, sessionRepo.buildInput(session))
                 .collect(::handleEvent)
@@ -210,11 +317,18 @@ class ChatViewModel(
         when (event) {
             is ChatStreamEvent.DialogPart -> {
                 parsedAnyDialog = true
+                enqueueDialog(event.dialog)
                 val snapshot = _state.value
-                // 首条立即开播；队列已空且打字结束时自动续播。
-                queue.addLast(event.dialog)
-                if (snapshot.phase == Phase.Streaming || (snapshot.queueSize == 0 && !snapshot.typing)) advanceInternal()
-                else _state.update { it.copy(queueSize = queue.size) }
+                // 首条立即开播；队列已空、打字结束且不在等音频时自动续播。
+                // 合成等待期间绝不重复推进，避免丢掉已在等待的行。
+                val idle = !snapshot.typing && !snapshot.synthesizing
+                if ((snapshot.phase == Phase.Streaming && !snapshot.synthesizing) ||
+                    (snapshot.queueSize == 0 && idle)
+                ) {
+                    advanceInternal()
+                } else {
+                    _state.update { it.copy(queueSize = queue.size) }
+                }
             }
 
             is ChatStreamEvent.Completed -> {
@@ -246,19 +360,185 @@ class ChatViewModel(
         }
     }
 
-    private fun advanceInternal() {
-        val dialog = queue.removeFirstOrNull() ?: return
-        val applied = applyDialog(dialog, _state.value.sprite, playVoice = true)
-        _state.update {
-            it.copy(phase = Phase.Playing, line = applied.line, sprite = applied.sprite, queueSize = queue.size)
+    // 入队并按需发起云语音预取：说话者绑定可用卡片且有台词才合成。
+    // 语言目标只认新建会话快照；缺少快照/目标语译文时跳过该条，不回退本地立绘语音。
+    private fun enqueueDialog(dialog: Dialog) {
+        val name = dialog.name.trim()
+        val speaker = charactersByName[name]
+        val boundCard = speaker
+            ?.let { container.voiceBindings.bindings.value[it.id] }
+            ?.let { cardId -> container.voiceCardRepository.cards.value.firstOrNull { it.id == cardId } }
+            ?.takeIf { it.isTtsReady }
+        if (speaker == null || boundCard == null) {
+            queue.addLast(QueuedDialog(dialog))
+            return
         }
-        startTypewriter(applied.line.speech)
+
+        val provider = boundCard.providerEnum ?: run {
+            queue.addLast(QueuedDialog(dialog, boundCard))
+            return
+        }
+
+        // 绑定卡片后即使台词为空也抑制本地录音；空台词不发起合成。
+        if (dialog.speech.isBlank()) {
+            queue.addLast(QueuedDialog(dialog, boundCard))
+            return
+        }
+
+        val snapshot = sessionVoiceLanguages[speaker.id]
+        // 无快照：静默跳过云 TTS，不回退当前卡片语言。
+        if (snapshot == null) {
+            queue.addLast(QueuedDialog(dialog, boundCard))
+            return
+        }
+
+        val target = VoiceLanguages.normalize(snapshot)
+        val needsTranslation = target == VoiceLanguages.JA || target == VoiceLanguages.EN
+        val translated = dialog.translate.trim()
+        if (needsTranslation && translated.isBlank()) {
+            ttsMissingTranslationNames.add(speaker.name)
+            queue.addLast(QueuedDialog(dialog, boundCard))
+            return
+        }
+
+        val text = if (needsTranslation) translated else dialog.speech.trim()
+        val job = CloudJob(
+            card = boundCard,
+            provider = provider,
+            audioFile = File(ttsDir, "$sessionId-${dialogSeq++}.mp3"),
+            text = text,
+            language = target,
+        )
+        // 队列在 VM 销毁或重试时关闭；异常关闭时直接完成空结果，避免推进时永久等待。
+        if (prefetchChannel.trySend(job).isFailure) {
+            job.pending.complete(null)
+        }
+        queue.addLast(QueuedDialog(dialog, boundCard, job))
+    }
+
+    // 串行消费预取队列：合成 → 落盘 → 完成对应 Deferred；失败记录待轮末汇总。
+    private suspend fun consumePrefetch() {
+        // 同一轮内按密文缓存明文 Key，避免每条台词都走 Keystore 解密。
+        val apiKeys = mutableMapOf<String, String>()
+        for (job in prefetchChannel) {
+            try {
+                val result = container.ttsRepository.synth(
+                    TtsRepository.SynthParams(
+                        provider = job.provider,
+                        baseUrl = job.card.baseUrl.trim(),
+                        apiKey = apiKeys.getOrPut(job.card.apiKeyCipher) {
+                            container.voiceCardRepository.decryptKey(job.card)
+                        },
+                        model = job.card.synthModel,
+                        voiceId = job.card.voiceId,
+                        text = job.text,
+                        language = job.language,
+                    ),
+                )
+                when (result) {
+                    is SynthResult.Ok -> {
+                        val saved = withContext(Dispatchers.IO) {
+                            writeAudio(job.audioFile, result.audio)
+                        }
+                        if (saved) {
+                            job.pending.complete(job.audioFile)
+                        } else {
+                            ttsFailureMessages.add(
+                                container.appContext.getString(R.string.chat_tts_save_failed),
+                            )
+                            job.audioFile.delete()
+                            job.pending.complete(null)
+                        }
+                    }
+
+                    is SynthResult.Failure -> {
+                        ttsFailureMessages.add(result.message)
+                        job.audioFile.delete()
+                        job.pending.complete(null)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                e.printStackTrace()
+                ttsFailureMessages.add(
+                    e.message?.takeIf { it.isNotBlank() }
+                        ?: container.appContext.getString(R.string.chat_tts_unknown_error),
+                )
+                job.audioFile.delete()
+                job.pending.complete(null)
+            }
+        }
+    }
+
+    // .part 临时文件原子写；返回是否成功。
+    private fun writeAudio(target: File, bytes: ByteArray): Boolean {
+        target.parentFile?.mkdirs()
+        val tmp = File(target.parentFile, target.name + ".part")
+        return try {
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            tmp.delete()
+            target.delete()
+            false
+        }
+    }
+
+    // 清理本会话的全部合成音频（cacheDir 兜底由系统回收）。
+    private fun cleanTtsFiles() {
+        lastCloudAudio = null
+        ttsDir.listFiles()?.forEach { if (it.name.startsWith("$sessionId-")) it.delete() }
+    }
+
+    private fun advanceInternal() {
+        val item = queue.removeFirstOrNull() ?: return
+        val cloud = item.cloud
+        val needsWait = cloud != null && !cloud.pending.isCompleted
+        _state.update { it.copy(queueSize = queue.size, synthesizing = needsWait) }
+        advanceJob = viewModelScope.launch {
+            // 展示前阻塞：等待该条云语音就绪（通常预取已完成，等待为零）。
+            val audio = cloud?.pending?.await()
+            _state.update { it.copy(synthesizing = false) }
+            val applied = applyDialog(
+                item.dialog,
+                _state.value.sprite,
+                playVoice = true,
+                boundCard = item.boundCard,
+            )
+            _state.update {
+                it.copy(
+                    phase = Phase.Playing,
+                    line = applied.line,
+                    sprite = applied.sprite,
+                    queueSize = queue.size,
+                )
+            }
+            startTypewriter(applied.line.speech)
+            if (audio != null) {
+                // 云音频原样播放（不套角色语速/音量）；先切歌再删上一条文件。
+                voicePlayer.play(audio, 1f, 1f)
+                lastCloudAudio?.delete()
+                lastCloudAudio = audio
+            }
+        }
     }
 
     // 行和立绘由调用方一次性提交，避免中间态。
     private data class AppliedDialog(val line: DisplayLine, val sprite: SpriteView?)
 
-    private fun applyDialog(dialog: Dialog, prev: SpriteView?, playVoice: Boolean): AppliedDialog {
+    // 绑定声音卡片的角色由云语音承担台词，本地 preset/fallback 录音静音让位。
+    private fun applyDialog(
+        dialog: Dialog,
+        prev: SpriteView?,
+        playVoice: Boolean,
+        boundCard: VoiceCard? = null,
+    ): AppliedDialog {
         val name = dialog.name.trim()
         val speaker = charactersByName[name]
 
@@ -276,7 +556,7 @@ class ChatViewModel(
         }
 
         val next = resolveSprite(speaker, dialog.sprite)
-        if (playVoice && next != null &&
+        if (playVoice && boundCard == null && next != null &&
             (prev?.characterId != speaker.id || prev.spriteIndex != next.spriteIndex)
         ) {
             playSpriteVoice(speaker, next.spriteIndex)

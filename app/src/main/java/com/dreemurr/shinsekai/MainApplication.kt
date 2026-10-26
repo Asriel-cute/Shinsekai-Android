@@ -13,11 +13,13 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        // 两个仓库并行加载，全部完成后置 ready。
+        // 各仓库并行加载，全部完成后置 ready。
         container.applicationScope.launch {
             coroutineScope {
                 launch { runCatching { container.characterRepository.load() }.onFailure { it.printStackTrace() } }
                 launch { runCatching { container.sessionRepository.load() }.onFailure { it.printStackTrace() } }
+                launch { runCatching { container.voiceCardRepository.load() }.onFailure { it.printStackTrace() } }
+                launch { runCatching { container.voiceBindings.load() }.onFailure { it.printStackTrace() } }
             }
             container.markReady()
         }

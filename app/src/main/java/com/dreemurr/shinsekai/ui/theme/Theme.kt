@@ -62,7 +62,7 @@ private val LightColorScheme = lightColorScheme(
 @Composable
 fun ShinsekaiTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // 默认关闭 Android 12+ 壁纸取色，锁定 Shinsekai 专属樱粉暗夜设计语言
+    // 默认关闭 Android 12+ 壁纸取色，锁定 Shinsekai 专属樱粉暗夜设计语言。
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {

@@ -2,6 +2,7 @@ package com.dreemurr.shinsekai.ui.characters
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,24 +12,30 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -54,6 +61,9 @@ import com.dreemurr.shinsekai.ui.common.ColorDot
 import com.dreemurr.shinsekai.ui.common.DeleteConfirmationDialog
 import com.dreemurr.shinsekai.ui.common.formatImportedAt
 import com.dreemurr.shinsekai.ui.common.spriteInfoText
+import com.dreemurr.shinsekai.ui.voices.voiceLanguageLabelRes
+import com.dreemurr.shinsekai.voice.TtsProvider
+import com.dreemurr.shinsekai.voice.VoiceCard
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,7 +80,10 @@ fun CharacterDetailScreen(
         },
     )
     val character by vm.character.collectAsStateWithLifecycle()
+    val boundCard by vm.boundCard.collectAsStateWithLifecycle()
+    val cards by vm.cards.collectAsStateWithLifecycle()
     var showDelete by remember { mutableStateOf(false) }
+    var showVoicePicker by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -102,7 +115,6 @@ fun CharacterDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // 基本属性 Panel
             OutlinedCard(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.outlinedCardColors(
@@ -136,7 +148,6 @@ fun CharacterDetailScreen(
                 }
             }
 
-            // 设定与标签 Panel
             OutlinedCard(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.outlinedCardColors(
@@ -168,7 +179,55 @@ fun CharacterDetailScreen(
                 }
             }
 
-            // 立绘展示 Panel
+            // 声音卡片：绑定后该角色台词由克隆音合成，本地切图录音让位。
+            OutlinedCard(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.character_panel_voice),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    val boundLang = stringResource(voiceLanguageLabelRes(boundCard?.lang))
+                    val boundLabel = boundCard?.let { "${it.name} · $boundLang" }
+                        ?: stringResource(R.string.character_voice_unbound)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showVoicePicker = true }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            stringResource(R.string.character_voice_card),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            boundLabel,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.character_voice_language_hint),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             OutlinedCard(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.outlinedCardColors(
@@ -218,6 +277,18 @@ fun CharacterDetailScreen(
         }
     }
 
+    if (showVoicePicker) {
+        VoiceCardPickerDialog(
+            cards = cards,
+            boundCardId = boundCard?.id,
+            onSelect = { cardId ->
+                vm.bind(cardId)
+                showVoicePicker = false
+            },
+            onDismiss = { showVoicePicker = false },
+        )
+    }
+
     if (showDelete) {
         DeleteConfirmationDialog(
             titleRes = R.string.delete_character_title,
@@ -265,4 +336,78 @@ private fun InfoItem(
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = valueStyle)
     }
+}
+
+// 声音卡片选择弹窗：列表 + 解绑项；空列表给出引导文案。
+@Composable
+private fun VoiceCardPickerDialog(
+    cards: List<VoiceCard>,
+    boundCardId: String?,
+    onSelect: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.character_voice_pick_title)) },
+        text = {
+            if (cards.isEmpty()) {
+                Text(stringResource(R.string.character_voice_no_cards))
+            } else {
+                LazyColumn(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp),
+                ) {
+                    items(cards, key = { it.id }) { card ->
+                        val providerLabel = stringResource(
+                            if (card.providerEnum == TtsProvider.MINIMAX) {
+                                R.string.provider_minimax
+                            } else {
+                                R.string.provider_aliyun
+                            },
+                        )
+                        val langLabel = stringResource(voiceLanguageLabelRes(card.lang))
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onSelect(card.id) }
+                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(card.name, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "$providerLabel · $langLabel",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (boundCardId != null) {
+                        item {
+                            Column {
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                )
+                                Text(
+                                    stringResource(R.string.character_voice_pick_none),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { onSelect(null) }
+                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+    )
 }
