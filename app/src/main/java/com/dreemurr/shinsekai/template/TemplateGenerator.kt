@@ -12,8 +12,14 @@ object TemplateGenerator {
     fun generate(
         characters: List<Character>,
         voiceLanguages: Map<String, String> = emptyMap(),
+        playerCharacterId: String? = null,
     ): String {
         require(characters.isNotEmpty()) { "生成模板至少需要一个角色" }
+
+        // 至少两人时主控才有效；找不到角色按未设置处理。
+        val player = playerCharacterId
+            ?.takeIf { characters.size >= 2 }
+            ?.let { id -> characters.firstOrNull { it.id == id } }
 
         val names = characters.joinToString("，") { it.name }
         val (spriteChars, plainChars) = characters.partition { it.sprites.isNotEmpty() }
@@ -36,9 +42,10 @@ object TemplateGenerator {
             appendJsonContract(spriteChars.isNotEmpty())
             appendSpriteGuide(spriteChars)
             appendCharacterSettings(settingChars)
+            appendPlayerSection(player)
             appendRequirements(names, spriteChars, plainChars, translationTargets)
             append('\n')
-            append("请开始对话, 开始时介绍下用户所处的情境和背景, 以及在做什么事情:").append("\n\n")
+            append("请开始对话，开始时介绍用户所处的情境和背景，以及正在做的事情：").append("\n\n")
             append(JSON_REMINDER).append('\n')
         }
     }
@@ -91,6 +98,20 @@ object TemplateGenerator {
         append('\n')
     }
 
+    // 主控固定语义：AI 可补写日常台词，并按需复述用户实际台词。
+    // 字段结构、立绘与翻译规则沿用通用提示词，此处只写主控专属语义。
+    private fun StringBuilder.appendPlayerSection(player: Character?) {
+        if (player == null) return
+        val name = player.name
+        append("主控角色：").append(name).append("（由用户扮演，AI 可根据角色设定、背景等补充日常台词和反应）\n")
+        append("用户消息代表").append(name)
+            .append("已经说出的台词、主动动作及明确表达的心理活动；用户给出的台词、行动和纠正优先。\n")
+        append("涉及关键行动、重大选择、承诺或立场时，若用户没有明确表态，可等待用户回复，尽量不替主控决定。\n")
+        append("涉及").append(name).append("的旁白应写出").append(name).append("，不要用“你”指代。\n")
+        append("主控台词复述：自行判断本轮是否需要把用户台词（可帮助用户补充润色）作为 dialog 首项复述，不必每轮都加；不需要时不添加，直接推进剧情。\n")
+        append("复述项不受 500 字左右的篇幅限制，也不必按句意拆条。\n")
+    }
+
     private fun StringBuilder.appendRequirements(
         names: String,
         spriteChars: List<Character>,
@@ -98,7 +119,7 @@ object TemplateGenerator {
         translationTargets: List<Pair<String, String>>,
     ) {
         append("要求：\n")
-        rule("格式严格：输出内容必须严格且仅为 JSON 格式，不得包含任何附加的解释、说明或问候语。")
+        rule("格式严格：输出内容必须严格且仅为 JSON 格式。")
         rule("角色名限制：name 字段只能是以下之一：$names 以及其他可能出现的人物名，或者固定关键字：旁白。")
         appendSpriteRules(spriteChars, plainChars)
         rule("台词风格：speech 字段中的台词须为简体中文，内容尽量符合角色个性、说话方式与背景设定。")
@@ -107,7 +128,7 @@ object TemplateGenerator {
         rule("篇幅控制：每个元素的 speech 字段不超过 500 字左右；内容多时必须按句意拆成多个元素，即同一角色连续说话或中间情绪变化就拆成多个元素。")
         rule("数组结构：所有对话和事件必须按时间顺序放入 dialog 数组中，数组中至少包含两个元素。")
         rule("旁白用途：旁白元素用于描写场景变化、人物动作、心理活动和环境气氛。")
-        rule("旁白节制：除开场介绍外，旁白只用于必要的场景变化、动作和心理活动；能由台词表达的内容尽量不要写旁白，也不要连续输出多条旁白。")
+        //rule("旁白节制：除开场介绍外，旁白只用于必要的场景变化、动作和心理活动；能由台词表达的内容尽量不要写旁白，也不要连续输出多条旁白。")
     }
 
     private fun StringBuilder.appendTranslationRules(targets: List<Pair<String, String>>) {

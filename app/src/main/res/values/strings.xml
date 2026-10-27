@@ -32,7 +32,7 @@
     <string name="delete_session_body">确定删除该会话吗？聊天记录将无法恢复。</string>
     <string name="session_preview_fallback">新对话</string>
 
-    <!-- 新建对话 -->
+    <!-- 新建对话 / 会话设置 -->
     <string name="new_session_title">新建对话</string>
     <string name="new_session_section_characters">出场角色</string>
     <string name="new_session_section_scenario">情景</string>
@@ -41,6 +41,18 @@
     <string name="new_session_empty_title">还没有可选的角色</string>
     <string name="new_session_empty_body">先到「角色」页导入.char角色包，再来开始对话</string>
     <string name="action_go_import">去导入</string>
+    <string name="session_setup_title">会话设置</string>
+    <string name="action_save_continue">保存并继续</string>
+    <string name="session_setup_cloud_tts">云语音</string>
+    <string name="session_setup_cloud_tts_hint">关闭后改用本地立绘语音；主控台词只显示不发声</string>
+    <string name="session_setup_player">主控角色</string>
+    <string name="session_setup_player_hint">选择故事中的主控角色；AI 会为其补充台词，并自行判断是否复述你的台词；有云语音时会朗读</string>
+    <string name="session_setup_player_none">不设置</string>
+    <string name="session_setup_player_badge">主控</string>
+    <string name="session_setup_player_requires_two">至少选择两位角色才能设置主控</string>
+    <string name="session_setup_missing_characters_format">有 %1$d 个角色已被删除，保存后将从会话中移除</string>
+    <string name="session_setup_not_found_title">会话不存在</string>
+    <string name="session_setup_not_found_body">该会话可能已被删除</string>
     <string name="character_info_format">立绘 %1$d 张 · 语音 %2$d 条</string>
     <string name="character_no_sprites">无立绘</string>
     <string name="character_stats">立绘与语音</string>
@@ -51,6 +63,7 @@
     <string name="chat_first_input_hint">请先输入你的第一句话</string>
     <string name="chat_generating">生成中…</string>
     <string name="chat_input_hint">输入你的台词…</string>
+    <string name="chat_input_hint_as_format">以%1$s的身份输入台词或行动…</string>
     <string name="chat_not_configured_title">未配置API</string>
     <string name="chat_not_configured_body">请先在设置中填写BaseUrl与模型名称</string>
     <string name="action_go_settings">去设置</string>
@@ -58,6 +71,20 @@
     <string name="record_empty">还没有对话记录</string>
     <string name="record_incomplete">未完成</string>
     <string name="record_user_label">你</string>
+    <string name="record_user_label_as_format">你（%1$s）</string>
+    <string name="record_rewind">回溯</string>
+    <string name="rewind_confirm_title">回溯到这条消息</string>
+    <string name="rewind_confirm_body">该消息会回到输入框，之后的记录将被删除且无法恢复。是否继续？</string>
+    <string name="chat_summary_label">历史摘要</string>
+    <string name="chat_context_tokens_format">上下文约 %1$s / %2$s tokens</string>
+    <string name="action_compress">压缩</string>
+    <string name="compress_confirm_title">压缩上下文</string>
+    <string name="compress_confirm_body_format">将把较早的 %1$d 条记录压缩成一条摘要，保留最近 %2$d 条。摘要之前的记录将被删除且无法回溯。是否继续？</string>
+    <string name="compress_running">正在压缩</string>
+    <string name="compress_running_body">正在生成历史摘要…</string>
+    <string name="compress_success_format">已压缩 %1$d 条记录</string>
+    <string name="compress_failed">压缩失败，请检查网络后重试</string>
+    <string name="compress_too_few">记录太少，无需压缩</string>
     <string name="chat_tts_failed_format">语音合成失败：%1$s</string>
     <string name="chat_tts_missing_translation_format">部分台词缺少目标语言译文，已跳过语音：%1$s</string>
     <string name="chat_tts_synthesizing">语音准备中…</string>
@@ -100,7 +127,7 @@
     <string name="character_voice_pick_title">选择角色声音</string>
     <string name="character_voice_no_cards">还没有角色声音，请先到「语音」页添加或克隆。</string>
     <string name="character_voice_pick_none">解除绑定</string>
-    <string name="character_voice_language_hint">语音语言与翻译规则在新建会话时写入提示词，修改后请新建会话。</string>
+    <string name="character_voice_language_hint">语音语言与翻译规则在新建会话时写入提示词；修改后在会话设置页重新保存即可生效。</string>
     <string name="delete_character_title">删除角色</string>
     <string name="delete_character_body">删除后不影响已有会话，但其中的立绘与语音将不可用。确定删除吗？</string>
 
@@ -136,6 +163,9 @@
     <string name="effort_low">低</string>
     <string name="effort_high">高</string>
     <string name="effort_max">最高</string>
+    <string name="settings_panel_about">关于</string>
+    <string name="settings_version_format">版本 %1$s</string>
+    <string name="action_check_update">检查更新</string>
 
     <!-- 语音页 -->
     <string name="voices_title">语音</string>
@@ -176,7 +206,7 @@
     <string name="voice_lang_ja">日本語</string>
     <string name="voice_lang_en">English</string>
     <string name="voice_lang_clone_hint">复刻与合成共用；导入 .voice 时自动填入</string>
-    <string name="voice_lang_edit_hint">修改仅对新建会话的翻译目标生效</string>
+    <string name="voice_lang_edit_hint">修改后新建会话自动生效；已有会话在会话设置页重新保存后生效</string>
     <string name="voice_lang_unsupported_format">导入完成；语音包语言「%1$s」暂不支持，已设为自动</string>
     <string name="action_fetch_voices">获取音色</string>
     <string name="voice_picker_title">选择音色</string>

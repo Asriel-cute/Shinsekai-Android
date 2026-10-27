@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -75,6 +76,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.dreemurr.shinsekai.R
+import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.chat.DialogJsonParser
 import com.dreemurr.shinsekai.chat.Role
 import com.dreemurr.shinsekai.di.LocalAppContainer
@@ -83,6 +85,7 @@ import com.dreemurr.shinsekai.ui.chat.ChatViewModel.LineKind
 import com.dreemurr.shinsekai.ui.chat.ChatViewModel.Phase
 import com.dreemurr.shinsekai.ui.common.parseHexColor
 import kotlinx.coroutines.flow.StateFlow
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,11 +106,27 @@ fun ChatScreen(
     val context = LocalContext.current
     var showRecord by remember { mutableStateOf(false) }
     var input by rememberSaveable { mutableStateOf("") }
+    var rewindTarget by remember { mutableStateOf<Pair<Int, String>?>(null) }
+
+    val inputHint = state.playerName?.let {
+        stringResource(R.string.chat_input_hint_as_format, it)
+    } ?: stringResource(R.string.chat_input_hint)
+    val userLabel = state.playerName?.let {
+        stringResource(R.string.record_user_label_as_format, it)
+    } ?: stringResource(R.string.record_user_label)
 
     LaunchedEffect(toast) {
         val message = toast ?: return@LaunchedEffect
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         vm.consumeToast()
+    }
+
+    // 回溯后把被回溯的用户消息回填输入框。
+    LaunchedEffect(state.pendingDraft) {
+        state.pendingDraft?.let {
+            input = it
+            vm.consumeDraft()
+        }
     }
 
     Column(
@@ -172,6 +191,7 @@ fun ChatScreen(
             loading = state.loading,
             streaming = state.streaming,
             input = input,
+            inputHint = inputHint,
             onInputChange = { input = it },
             onSend = {
                 vm.send(input)
@@ -183,8 +203,97 @@ fun ChatScreen(
 
     if (showRecord) {
         ModalBottomSheet(onDismissRequest = { showRecord = false }) {
-            RecordSheetContent(state.history)
+            RecordSheetContent(
+                history = state.history,
+                tokenEstimate = state.tokenEstimate,
+                userLabel = userLabel,
+                compressEnabled = !state.streaming && !state.compressing &&
+                    state.history.count { it.role != Role.system } > ContextCompressor.RECENT_ENTRIES,
+                onCompress = {
+                    showRecord = false
+                    vm.requestCompress()
+                },
+                onRewind = { index, content -> rewindTarget = index to content },
+            )
         }
+    }
+
+    // 回溯确认：截断到该条之前并把原文回填输入框。
+    rewindTarget?.let { (index, _) ->
+        AlertDialog(
+            onDismissRequest = { rewindTarget = null },
+            title = { Text(stringResource(R.string.rewind_confirm_title)) },
+            text = { Text(stringResource(R.string.rewind_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.rewindTo(index)
+                        rewindTarget = null
+                        showRecord = false
+                    },
+                ) { Text(stringResource(R.string.record_rewind)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { rewindTarget = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
+
+    // 手动压缩确认：明确说明摘要点之前的记录会被删除。
+    if (state.showCompressConfirm) {
+        val foldableCount = (
+            state.history.count { it.role != Role.system } - ContextCompressor.RECENT_ENTRIES
+            ).coerceAtLeast(0)
+        AlertDialog(
+            onDismissRequest = vm::dismissCompressConfirm,
+            title = { Text(stringResource(R.string.compress_confirm_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.compress_confirm_body_format,
+                        foldableCount,
+                        ContextCompressor.RECENT_ENTRIES,
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = vm::compress) {
+                    Text(stringResource(R.string.action_compress))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissCompressConfirm) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
+
+    if (state.compressing) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.compress_running)) },
+            text = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(stringResource(R.string.compress_running_body))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = vm::cancelCompress) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
     }
 
     if (state.notConfigured) {
@@ -228,30 +337,28 @@ private fun SpriteImage(sprite: ChatViewModel.SpriteView) {
     )
 }
 
-// 流结束后隐藏底栏，只通过对话框推进。
+// 生成中显示停止条；停止后输入栏常驻，发送即丢弃未播放队列。
 @Composable
 private fun ChatBottomBar(
     phase: Phase,
     loading: Boolean,
     streaming: Boolean,
     input: String,
+    inputHint: String,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
-    when (phase) {
-        Phase.WaitingInput -> InputBar(
+    when {
+        streaming -> StopBar(onStop = onStop)
+        phase == Phase.Error -> Spacer(Modifier.navigationBarsPadding())
+        else -> InputBar(
             loading = loading,
             input = input,
+            hint = inputHint,
             onInputChange = onInputChange,
             onSend = onSend,
         )
-
-        // 无底栏可见时补齐导航栏内边距，避免对话框被系统导航栏遮挡。
-        Phase.Streaming, Phase.Playing ->
-            if (streaming) StopBar(onStop = onStop) else Spacer(Modifier.navigationBarsPadding())
-
-        Phase.Error -> Spacer(Modifier.navigationBarsPadding())
     }
 }
 
@@ -260,6 +367,7 @@ private fun ChatBottomBar(
 private fun InputBar(
     loading: Boolean,
     input: String,
+    hint: String,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
 ) {
@@ -301,7 +409,7 @@ private fun InputBar(
                 modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
-                        stringResource(R.string.chat_input_hint),
+                        hint,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -589,21 +697,88 @@ private fun SpeechText(full: String, visibleSpeech: StateFlow<String>) {
 }
 
 @Composable
-private fun RecordSheetContent(history: List<SessionEntry>) {
-    val entries = remember(history) { history.filter { it.role != Role.system } }
+private fun RecordSheetContent(
+    history: List<SessionEntry>,
+    tokenEstimate: Int,
+    userLabel: String,
+    compressEnabled: Boolean,
+    onCompress: () -> Unit,
+    onRewind: (Int, String) -> Unit,
+) {
+    // 保留原始下标，回溯按 history 下标截断。
+    val entries = remember(history) {
+        history.withIndex().filter { it.value.role != Role.system }
+    }
     LazyColumn(
         Modifier
             .fillMaxWidth()
             .heightIn(max = 520.dp)
             .padding(horizontal = 20.dp),
     ) {
+        item {
+            RecordHeader(
+                tokenEstimate = tokenEstimate,
+                compressEnabled = compressEnabled,
+                onCompress = onCompress,
+            )
+        }
         if (entries.isEmpty()) {
             item { RecordEmptyHint() }
         }
-        items(entries) { entry -> RecordEntryItem(entry) }
+        items(entries, key = { it.index }) { (index, entry) ->
+            RecordEntryItem(
+                entry = entry,
+                userLabel = userLabel,
+                onRewind = { onRewind(index, entry.content) },
+            )
+        }
         item { Spacer(Modifier.navigationBarsPadding().height(16.dp)) }
     }
 }
+
+// 上下文用量与手动压缩入口；估算值仅供参考。
+@Composable
+private fun RecordHeader(
+    tokenEstimate: Int,
+    compressEnabled: Boolean,
+    onCompress: () -> Unit,
+) {
+    val overLimit = tokenEstimate > ContextCompressor.MAX_CONTEXT_TOKENS
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(
+                R.string.chat_context_tokens_format,
+                formatTokens(tokenEstimate),
+                formatTokens(ContextCompressor.MAX_CONTEXT_TOKENS),
+            ),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (overLimit) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        OutlinedButton(
+            onClick = onCompress,
+            enabled = compressEnabled,
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            modifier = Modifier.height(32.dp),
+        ) {
+            Text(
+                stringResource(R.string.action_compress),
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
+}
+
+// 82.4k / 128k 形式的 token 展示。
+private fun formatTokens(tokens: Int): String =
+    if (tokens >= 1000) String.format(Locale.US, "%.1fk", tokens / 1000.0) else tokens.toString()
 
 @Composable
 private fun RecordEmptyHint() {
@@ -616,17 +791,48 @@ private fun RecordEmptyHint() {
 }
 
 @Composable
-private fun RecordEntryItem(entry: SessionEntry) {
-    when (entry.role) {
-        Role.user ->
+private fun RecordEntryItem(entry: SessionEntry, userLabel: String, onRewind: () -> Unit) {
+    when {
+        // 压缩产生的摘要：单独展示，不给回溯。
+        entry.summary -> Column(Modifier.padding(vertical = 8.dp)) {
             Text(
-                "${stringResource(R.string.record_user_label)}：${entry.content}",
+                stringResource(R.string.chat_summary_label),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.tertiary,
+            )
+            Text(
+                entry.content,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        entry.role == Role.user -> Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "$userLabel：${entry.content}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 8.dp),
+                modifier = Modifier.weight(1f),
             )
+            TextButton(
+                onClick = onRewind,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(30.dp),
+            ) {
+                Text(
+                    stringResource(R.string.record_rewind),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
 
-        Role.assistant -> {
+        entry.role == Role.assistant -> {
             val dialogs = remember(entry) { DialogJsonParser.parseAll(entry.content) }
             Column(Modifier.padding(vertical = 8.dp)) {
                 if (!entry.complete) {
@@ -646,7 +852,7 @@ private fun RecordEntryItem(entry: SessionEntry) {
             }
         }
 
-        Role.system -> Unit
+        else -> Unit
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
 }

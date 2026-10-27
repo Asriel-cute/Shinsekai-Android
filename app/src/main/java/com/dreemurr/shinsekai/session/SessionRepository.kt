@@ -39,14 +39,18 @@ class SessionRepository(
         characters: List<Character>,
         scenario: String,
         voiceLanguages: Map<String, String> = emptyMap(),
+        cloudTtsEnabled: Boolean = true,
+        playerCharacterId: String? = null,
     ): ChatSession = mutex.withLock {
         withContext(io) {
             val now = System.currentTimeMillis()
+            val scenarioText = scenario.trim()
             val names = characters.map { it.name }
             val ids = characters.map { it.id }
             val idSet = ids.toSet()
             val voiceSnapshot = voiceLanguages.filterKeys { it in idSet }
-            val system = TemplateGenerator.generate(characters, voiceSnapshot)
+            val playerId = normalizePlayerId(playerCharacterId, characters)
+            val system = TemplateGenerator.generate(characters, voiceSnapshot, playerId)
             val session = ChatSession(
                 id = UUID.randomUUID().toString(),
                 title = if (names.size <= 2) {
@@ -55,12 +59,14 @@ class SessionRepository(
                     names.take(2).joinToString("、") + " 等 ${names.size} 人"
                 },
                 characterIds = ids,
+                playerCharacterId = playerId,
                 voiceLanguages = voiceSnapshot,
-                scenario = scenario,
+                cloudTtsEnabled = cloudTtsEnabled,
+                scenario = scenarioText,
                 history = listOf(
                     SessionEntry(
                         role = Role.system,
-                        content = TemplateGenerator.composeForLlm(scenario, system),
+                        content = TemplateGenerator.composeForLlm(scenarioText, system),
                     ),
                 ),
                 createdAt = now,
@@ -70,6 +76,68 @@ class SessionRepository(
             _sessions.value = listOf(session) + _sessions.value
             session
         }
+    }
+
+    // 会话设置页保存：按当前角色/场景重生成 system 快照，其余记录原样保留。
+    suspend fun updateSetup(
+        id: String,
+        characters: List<Character>,
+        scenario: String,
+        voiceLanguages: Map<String, String> = emptyMap(),
+        cloudTtsEnabled: Boolean = true,
+        playerCharacterId: String? = null,
+    ): ChatSession? = update(id) { session ->
+        val ids = characters.map { it.id }
+        val idSet = ids.toSet()
+        val voiceSnapshot = voiceLanguages.filterKeys { it in idSet }
+        val playerId = normalizePlayerId(playerCharacterId, characters)
+        val system = TemplateGenerator.composeForLlm(
+            scenario.trim(),
+            TemplateGenerator.generate(characters, voiceSnapshot, playerId),
+        )
+        val history = if (session.history.firstOrNull()?.role == Role.system) {
+            session.history.mapIndexed { index, entry ->
+                if (index == 0) entry.copy(content = system) else entry
+            }
+        } else {
+            listOf(SessionEntry(role = Role.system, content = system)) + session.history
+        }
+        session.copy(
+            characterIds = ids,
+            playerCharacterId = playerId,
+            voiceLanguages = voiceSnapshot,
+            cloudTtsEnabled = cloudTtsEnabled,
+            scenario = scenario.trim(),
+            history = history,
+        )
+    }
+
+    // 回溯：截断到 keep（不含）；keep 至少保留 system 快照。
+    suspend fun truncate(id: String, keep: Int): ChatSession? = update(id) { session ->
+        session.copy(history = session.history.take(keep.coerceIn(1, session.history.size)))
+    }
+
+    // 打断播放：最后一条 assistant 只保留已播出的 dialog；content 为空则整条丢弃。
+    suspend fun truncateLastAssistant(id: String, content: String): ChatSession? = update(id) { session ->
+        val last = session.history.lastOrNull()
+        if (last?.role != Role.assistant) return@update session
+        val history = if (content.isBlank()) {
+            session.history.dropLast(1)
+        } else {
+            session.history.dropLast(1) + last.copy(content = content)
+        }
+        session.copy(history = history)
+    }
+
+    // 手动压缩：把前 foldedCount 条非 system 记录替换为一条摘要。
+    suspend fun applyCompaction(
+        id: String,
+        summary: SessionEntry,
+        foldedCount: Int,
+    ): ChatSession? = update(id) { session ->
+        val rest = session.history.drop(1)
+        val kept = rest.drop(foldedCount.coerceIn(0, rest.size))
+        session.copy(history = listOf(session.history.first(), summary) + kept)
     }
 
     suspend fun delete(id: String): Boolean = mutex.withLock {
@@ -102,6 +170,10 @@ class SessionRepository(
         session.history.mapNotNull { entry ->
             if (entry.complete) InputItem(role = entry.role, content = entry.content) else null
         }
+
+    // 主控至少要有对手戏角色且在选角内；失效按未设置处理。
+    private fun normalizePlayerId(playerCharacterId: String?, characters: List<Character>): String? =
+        playerCharacterId?.takeIf { id -> characters.size >= 2 && characters.any { it.id == id } }
 
     private suspend fun update(
         id: String,

@@ -35,14 +35,14 @@ import com.dreemurr.shinsekai.ui.navigation.AppNavigator
 import com.dreemurr.shinsekai.ui.navigation.CharacterDetailRoute
 import com.dreemurr.shinsekai.ui.navigation.CharactersRoute
 import com.dreemurr.shinsekai.ui.navigation.ChatRoute
-import com.dreemurr.shinsekai.ui.navigation.NewSessionRoute
 import com.dreemurr.shinsekai.ui.navigation.SessionsRoute
+import com.dreemurr.shinsekai.ui.navigation.SessionSetupRoute
 import com.dreemurr.shinsekai.ui.navigation.SettingsRoute
 import com.dreemurr.shinsekai.ui.navigation.VoiceCardEditRoute
 import com.dreemurr.shinsekai.ui.navigation.VoiceCloneRoute
 import com.dreemurr.shinsekai.ui.navigation.VoicesRoute
 import com.dreemurr.shinsekai.ui.navigation.rememberNavigationState
-import com.dreemurr.shinsekai.ui.newsession.NewSessionScreen
+import com.dreemurr.shinsekai.ui.sessionsetup.SessionSetupScreen
 import com.dreemurr.shinsekai.ui.sessions.SessionsScreen
 import com.dreemurr.shinsekai.ui.settings.SettingsScreen
 import com.dreemurr.shinsekai.ui.theme.ShinsekaiTheme
@@ -77,8 +77,9 @@ private fun AppRoot() {
     val provider = entryProvider {
         entry<SessionsRoute> {
             SessionsScreen(
-                onNewSession = { navigator.navigate(NewSessionRoute) },
-                onOpenSession = { navigator.navigate(ChatRoute(it)) },
+                onNewSession = { navigator.navigate(SessionSetupRoute()) },
+                // 历史会话先进设置页，保存后继续对话。
+                onOpenSession = { navigator.navigate(SessionSetupRoute(it)) },
             )
         }
         entry<CharactersRoute> {
@@ -92,10 +93,11 @@ private fun AppRoot() {
             )
         }
         entry<SettingsRoute> { SettingsScreen() }
-        entry<NewSessionRoute> {
-            NewSessionScreen(
+        entry<SessionSetupRoute> { key ->
+            SessionSetupScreen(
+                sessionId = key.sessionId,
                 onBack = { navigator.goBack() },
-                onCreated = { id -> navigator.popAndNavigate(ChatRoute(id)) },
+                onSaved = { id -> navigator.popAndNavigate(ChatRoute(id)) },
                 onGoImport = { navigator.navigate(CharactersRoute) },
             )
         }

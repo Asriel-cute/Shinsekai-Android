@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -57,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.dreemurr.shinsekai.BuildConfig
 import com.dreemurr.shinsekai.R
 import com.dreemurr.shinsekai.chat.AllProviderSettings
 import com.dreemurr.shinsekai.chat.ConnectionTestResult
@@ -67,6 +69,9 @@ import com.dreemurr.shinsekai.chat.ReasoningEffort
 import com.dreemurr.shinsekai.di.LocalAppContainer
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+// Releases 页面；「检查更新」不请求网络，直接跳转由浏览器展示最新版本。
+private const val RELEASES_URL = "https://github.com/Asriel-cute/Shinsekai-Android/releases"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,9 +109,11 @@ fun SettingsScreen() {
 
     // Toast 只用 context 本体；文案仍按约定经 stringResource 获取。
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val savedMsg = stringResource(R.string.settings_saved)
     val failedMsg = stringResource(R.string.settings_save_failed)
     val testSuccessFormat = stringResource(R.string.settings_test_success_format)
+    val openLinkFailedMsg = stringResource(R.string.err_open_link)
     val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize()) {
@@ -285,6 +292,30 @@ fun SettingsScreen() {
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                 )
+            }
+
+            // 关于：当前版本与检查更新入口。
+            SettingsPanel(stringResource(R.string.settings_panel_about)) {
+                Text(
+                    stringResource(R.string.settings_version_format, BuildConfig.VERSION_NAME),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                OutlinedButton(
+                    onClick = {
+                        runCatching { uriHandler.openUri(RELEASES_URL) }
+                            .onFailure {
+                                Toast.makeText(context, openLinkFailedMsg, Toast.LENGTH_SHORT).show()
+                            }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                ) {
+                    Text(stringResource(R.string.action_check_update))
+                }
             }
 
             Spacer(Modifier.height(24.dp))

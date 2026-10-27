@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.chat
 
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -69,7 +70,15 @@ class DialogJsonParser {
             allowTrailingComma = true
         }
 
+        // 重建 assistant 原文：打断播放时只保留已播出的 dialog。
+        private val encoder = Json {
+            encodeDefaults = true
+            explicitNulls = false
+        }
+
         fun parseAll(text: String): List<Dialog> = DialogJsonParser().append(text)
+
+        fun encode(dialogs: List<Dialog>): String = encoder.encodeToString(DialogPayload(dialogs))
 
         private fun decodeDialog(text: String): Dialog? {
             val obj = try {

@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.chat
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
@@ -237,6 +238,34 @@ class ChatRepository {
         } catch (e: Exception) {
             e.printStackTrace()
             ConnectionTestResult.Failure(friendlyError(e))
+        }
+    }
+
+    // 手动压缩用的非流式纯文本请求；失败或空响应返回 null，由调用方决定报错。
+    suspend fun summarize(
+        settings: ChatSettings,
+        system: String,
+        user: String,
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val spec = specFor(settings.provider, settings.apiType)
+            val call = apiFor(settings.baseUrl)
+                .post(
+                    spec.summaryUrl(settings.modelName),
+                    spec.headers(settings.apiKey),
+                    spec.buildSummaryBody(json, settings.modelName, system, user),
+                )
+            // 协程取消时联动断开，避免离开页面后请求悬挂。
+            currentCoroutineContext().job.invokeOnCompletion { call.cancel() }
+            val response = call.execute()
+            if (!response.isSuccessful) return@withContext null
+            val text = runCatching { response.body()?.string() }.getOrNull()
+                ?: return@withContext null
+            spec.parseSummary(text)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            e.printStackTrace()
+            null
         }
     }
 

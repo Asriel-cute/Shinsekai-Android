@@ -3,6 +3,7 @@ package com.dreemurr.shinsekai.di
 import android.content.Context
 import com.dreemurr.shinsekai.character.CharacterRepository
 import com.dreemurr.shinsekai.chat.ChatRepository
+import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.session.SessionRepository
 import com.dreemurr.shinsekai.settings.SettingsRepository
 import com.dreemurr.shinsekai.voice.TtsRepository
@@ -29,6 +30,7 @@ class AppContainer(context: Context) {
     val characterRepository = CharacterRepository(File(appContext.filesDir, "characters"))
     val sessionRepository = SessionRepository(File(appContext.filesDir, "sessions"))
     val chatRepository = ChatRepository()
+    val contextCompressor = ContextCompressor(chatRepository)
     val voicePlayer = VoicePlayer()
     val voiceCardRepository = VoiceCardRepository(File(appContext.filesDir, "voice_cards.json"))
     val voiceBindings = VoiceBindings(File(appContext.filesDir, "voice_bindings.json"))

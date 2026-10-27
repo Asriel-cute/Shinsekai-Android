@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.dreemurr.shinsekai.R
 import com.dreemurr.shinsekai.character.Character
 import com.dreemurr.shinsekai.chat.ChatStreamEvent
+import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.chat.Dialog
 import com.dreemurr.shinsekai.chat.DialogJsonParser
 import com.dreemurr.shinsekai.chat.Role
+import com.dreemurr.shinsekai.chat.TokenEstimator
 import com.dreemurr.shinsekai.di.AppContainer
 import com.dreemurr.shinsekai.session.ChatSession
 import com.dreemurr.shinsekai.session.SessionEntry
@@ -77,7 +79,15 @@ class ChatViewModel(
         val sprite: SpriteView? = null,
         val error: String? = null,
         val notConfigured: Boolean = false,
+        // 主控角色名；仅用于输入提示与记录面板标签。
+        val playerName: String? = null,
         val history: List<SessionEntry> = emptyList(),
+        // 上下文估算与手动压缩状态；进入聊天页超限弹确认。
+        val tokenEstimate: Int = 0,
+        val showCompressConfirm: Boolean = false,
+        val compressing: Boolean = false,
+        // 回溯后回填输入框的一次性草稿。
+        val pendingDraft: String? = null,
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -107,6 +117,12 @@ class ChatViewModel(
     // 新建会话时的语言快照；缺失条目静默跳过云 TTS，不回退当前卡片。
     private var sessionVoiceLanguages: Map<String, String> = emptyMap()
 
+    // 会话级云语音开关；关闭后绑定卡片让位本地立绘语音。
+    private var cloudTtsEnabled = true
+
+    // 主控角色；主控台词不播本地立绘语音，只走云语音或静默展示。
+    private var playerCharacterId: String? = null
+
     // 云语音任务：只有需要合成时才创建，pending 在完成后给出音频文件（null = 失败/无音频）。
     private class CloudJob(
         val card: VoiceCard,
@@ -118,18 +134,24 @@ class ChatViewModel(
     )
 
     // 队列元素：boundCard 非空即由绑定卡片承担语音，合成跳过时也抑制本地立绘语音。
+    // suppressLocalVoice 用于主控：固定立绘录音不能被当成用户台词的朗读。
     private class QueuedDialog(
         val dialog: Dialog,
         val boundCard: VoiceCard? = null,
         val cloud: CloudJob? = null,
+        val suppressLocalVoice: Boolean = false,
     )
 
     private val queue = ArrayDeque<QueuedDialog>()
+    // 打断播放判定：本轮已入队与已真正上屏的 dialog 数，两者差值即未播内容。
+    private var enqueuedDialogs = 0
+    private val playedDialogs = mutableListOf<Dialog>()
     private val spriteMemory = mutableMapOf<String, Int>()
     private var terminal: Terminal? = null
     private var parsedAnyDialog = false
     private var streamJob: Job? = null
     private var typewriterJob: Job? = null
+    private var compressJob: Job? = null
 
     // 云语音：流中全量串行预取，推进时等待就绪（展示前阻塞）。
     private var prefetchChannel = Channel<CloudJob>(Channel.UNLIMITED)
@@ -147,14 +169,17 @@ class ChatViewModel(
             container.ready.first { it }
             val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId }
             if (session != null) {
-                sessionVoiceLanguages = session.voiceLanguages
                 val byId = characterRepo.characters.value.associateBy { it.id }
                 for (id in session.characterIds) {
                     val character = byId[id] ?: continue
                     charactersByName.putIfAbsent(character.name, character)
                 }
                 replayHistory(session)
-                _state.update { it.copy(title = session.title, history = session.history) }
+                applySession(session)
+                // 每次进入聊天页检测一次；超限弹窗由用户决定是否压缩。
+                _state.update {
+                    it.copy(showCompressConfirm = it.tokenEstimate > ContextCompressor.MAX_CONTEXT_TOKENS)
+                }
             }
             _state.update { it.copy(loading = false) }
         }
@@ -162,10 +187,24 @@ class ChatViewModel(
             sessionRepo.sessions
                 .mapNotNull { list -> list.firstOrNull { it.id == sessionId } }
                 .distinctUntilChanged()
-                .collect { session ->
-                    sessionVoiceLanguages = session.voiceLanguages
-                    _state.update { it.copy(title = session.title, history = session.history) }
-                }
+                .collect { applySession(it) }
+        }
+    }
+
+    // 同步会话级字段与派生 UI 状态；快照/开关语义见各字段注释。
+    private fun applySession(session: ChatSession) {
+        sessionVoiceLanguages = session.voiceLanguages
+        cloudTtsEnabled = session.cloudTtsEnabled
+        playerCharacterId = session.playerCharacterId
+        val byId = characterRepo.characters.value.associateBy { it.id }
+        val playerName = session.playerCharacterId?.let(byId::get)?.name
+        _state.update {
+            it.copy(
+                title = session.title,
+                playerName = playerName,
+                history = session.history,
+                tokenEstimate = TokenEstimator.estimate(sessionRepo.buildInput(session)),
+            )
         }
     }
 
@@ -173,9 +212,24 @@ class ChatViewModel(
         val trimmed = text.trim()
         if (trimmed.isEmpty() || !checkConfigured()) return
         viewModelScope.launch {
+            // 播放中发送即打断：历史只保留已播出的 dialog，未播放部分一并丢弃。
+            dropPlayback()
+            trimUnplayedReply()
             sessionRepo.appendEntry(sessionId, SessionEntry(role = Role.user, content = trimmed))
             startStream()
         }
+    }
+
+    // 有未播内容时把最后一条 assistant 截断为已播出的 dialog；一条都没播则整条删除。
+    private suspend fun trimUnplayedReply() {
+        if (enqueuedDialogs <= playedDialogs.size) return
+        val last = sessionRepo.sessions.value
+            .firstOrNull { it.id == sessionId }?.history?.lastOrNull()
+        if (last?.role != Role.assistant) return
+        val content = if (playedDialogs.isEmpty()) "" else DialogJsonParser.encode(playedDialogs)
+        sessionRepo.truncateLastAssistant(sessionId, content)
+        enqueuedDialogs = 0
+        playedDialogs.clear()
     }
 
     // 重试复用 history 中的用户消息。
@@ -185,6 +239,106 @@ class ChatViewModel(
 
     fun stop() {
         chatRepo.cancel()
+    }
+
+    // 回溯：截断到目标用户消息之前，并把原文回填输入框等改写。
+    fun rewindTo(historyIndex: Int) {
+        viewModelScope.launch {
+            // 流式生成中先停止并等残片落盘，避免截断后残片再追加到结尾。
+            if (_state.value.streaming) {
+                chatRepo.cancel()
+                streamJob?.join()
+            }
+            dropPlayback()
+            val draft = sessionRepo.sessions.value
+                .firstOrNull { it.id == sessionId }
+                ?.history?.getOrNull(historyIndex)?.content
+            sessionRepo.truncate(sessionId, keep = historyIndex)
+            restoreFromHistory()
+            if (draft != null) {
+                _state.update {
+                    it.copy(
+                        pendingDraft = draft,
+                        phase = Phase.WaitingInput,
+                        streaming = false,
+                        error = null,
+                    )
+                }
+            }
+        }
+    }
+
+    fun consumeDraft() {
+        _state.update { it.copy(pendingDraft = null) }
+    }
+
+    fun requestCompress() {
+        _state.update { it.copy(showCompressConfirm = true) }
+    }
+
+    fun dismissCompressConfirm() {
+        _state.update { it.copy(showCompressConfirm = false) }
+    }
+
+    // 手动压缩：失败保持原样，仅 Toast 提示。
+    fun compress() {
+        if (_state.value.compressing) return
+        if (!checkConfigured()) {
+            _state.update { it.copy(showCompressConfirm = false) }
+            return
+        }
+        val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId } ?: return
+        compressJob = viewModelScope.launch {
+            _state.update { it.copy(compressing = true, showCompressConfirm = false) }
+            try {
+                val settings = container.settingsRepository.settings.value
+                val result = container.contextCompressor.compact(session, settings)
+                if (result == null) {
+                    _toast.value = container.appContext.getString(R.string.compress_too_few)
+                } else {
+                    sessionRepo.applyCompaction(sessionId, result.summaryEntry, result.foldedCount)
+                    _toast.value = container.appContext.getString(
+                        R.string.compress_success_format,
+                        result.foldedCount,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _toast.value = container.appContext.getString(R.string.compress_failed)
+            } finally {
+                _state.update { it.copy(compressing = false) }
+            }
+        }
+    }
+
+    fun cancelCompress() {
+        compressJob?.cancel()
+    }
+
+    // 丢弃未播放的展示队列：清队列、停推进与打字机，当前台词补全显示。
+    private fun dropPlayback() {
+        queue.clear()
+        advanceJob?.cancel()
+        typewriterJob?.cancel()
+        _state.value.line?.let { _visibleSpeech.value = it.speech }
+        _state.update { it.copy(typing = false, synthesizing = false, queueSize = 0) }
+    }
+
+    // 截断/压缩后重放剩余历史，恢复最后一句与立绘记忆。
+    private fun restoreFromHistory() {
+        spriteMemory.clear()
+        terminal = null
+        parsedAnyDialog = false
+        enqueuedDialogs = 0
+        playedDialogs.clear()
+        _state.update {
+            it.copy(line = null, sprite = null, typing = false, queueSize = 0, error = null)
+        }
+        _visibleSpeech.value = ""
+        val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId } ?: return
+        replayHistory(session)
     }
 
     fun consumeNotConfigured() {
@@ -287,6 +441,8 @@ class ChatViewModel(
         clearTtsNotices()
         cleanTtsFiles() // 上一轮残留的合成音频不再可用
         queue.clear()
+        enqueuedDialogs = 0
+        playedDialogs.clear()
         terminal = null
         parsedAnyDialog = false
         _state.update {
@@ -313,7 +469,8 @@ class ChatViewModel(
         }
     }
 
-    private fun handleEvent(event: ChatStreamEvent) {
+    // 落盘完成后才切换 UI 状态，保证停止后立即发送不会与残片写入错序。
+    private suspend fun handleEvent(event: ChatStreamEvent) {
         when (event) {
             is ChatStreamEvent.DialogPart -> {
                 parsedAnyDialog = true
@@ -363,44 +520,35 @@ class ChatViewModel(
     // 入队并按需发起云语音预取：说话者绑定可用卡片且有台词才合成。
     // 语言目标只认新建会话快照；缺少快照/目标语译文时跳过该条，不回退本地立绘语音。
     private fun enqueueDialog(dialog: Dialog) {
+        enqueuedDialogs++
         val name = dialog.name.trim()
         val speaker = charactersByName[name]
-        val boundCard = speaker
+        // 主控台词一律不播本地立绘语音：固定录音不是用户台词的朗读。
+        val suppressLocalVoice = speaker != null && speaker.id == playerCharacterId
+        // 会话级开关关闭时不走云语音，boundCard 传 null 回退本地立绘语音。
+        val boundCard = if (!cloudTtsEnabled) null else speaker
             ?.let { container.voiceBindings.bindings.value[it.id] }
             ?.let { cardId -> container.voiceCardRepository.cards.value.firstOrNull { it.id == cardId } }
             ?.takeIf { it.isTtsReady }
-        if (speaker == null || boundCard == null) {
-            queue.addLast(QueuedDialog(dialog))
-            return
-        }
+        val cloud = createCloudJob(dialog, speaker, boundCard)
+        queue.addLast(QueuedDialog(dialog, boundCard, cloud, suppressLocalVoice))
+    }
 
-        val provider = boundCard.providerEnum ?: run {
-            queue.addLast(QueuedDialog(dialog, boundCard))
-            return
-        }
-
-        // 绑定卡片后即使台词为空也抑制本地录音；空台词不发起合成。
-        if (dialog.speech.isBlank()) {
-            queue.addLast(QueuedDialog(dialog, boundCard))
-            return
-        }
-
-        val snapshot = sessionVoiceLanguages[speaker.id]
+    // 合成条件齐备才创建预取任务；条件不满足时返回 null，仍保留绑定卡片以抑制本地录音。
+    private fun createCloudJob(dialog: Dialog, speaker: Character?, boundCard: VoiceCard?): CloudJob? {
+        if (speaker == null || boundCard == null) return null
+        val provider = boundCard.providerEnum ?: return null
+        // 空台词不发起合成。
+        if (dialog.speech.isBlank()) return null
         // 无快照：静默跳过云 TTS，不回退当前卡片语言。
-        if (snapshot == null) {
-            queue.addLast(QueuedDialog(dialog, boundCard))
-            return
-        }
-
+        val snapshot = sessionVoiceLanguages[speaker.id] ?: return null
         val target = VoiceLanguages.normalize(snapshot)
         val needsTranslation = target == VoiceLanguages.JA || target == VoiceLanguages.EN
         val translated = dialog.translate.trim()
         if (needsTranslation && translated.isBlank()) {
             ttsMissingTranslationNames.add(speaker.name)
-            queue.addLast(QueuedDialog(dialog, boundCard))
-            return
+            return null
         }
-
         val text = if (needsTranslation) translated else dialog.speech.trim()
         val job = CloudJob(
             card = boundCard,
@@ -413,7 +561,7 @@ class ChatViewModel(
         if (prefetchChannel.trySend(job).isFailure) {
             job.pending.complete(null)
         }
-        queue.addLast(QueuedDialog(dialog, boundCard, job))
+        return job
     }
 
     // 串行消费预取队列：合成 → 落盘 → 完成对应 Deferred；失败记录待轮末汇总。
@@ -510,6 +658,7 @@ class ChatViewModel(
                 _state.value.sprite,
                 playVoice = true,
                 boundCard = item.boundCard,
+                suppressLocalVoice = item.suppressLocalVoice,
             )
             _state.update {
                 it.copy(
@@ -519,6 +668,8 @@ class ChatViewModel(
                     queueSize = queue.size,
                 )
             }
+            // 上屏后才计入已播放，打断时未播部分会被截断。
+            playedDialogs.add(item.dialog)
             startTypewriter(applied.line.speech)
             if (audio != null) {
                 // 云音频原样播放（不套角色语速/音量）；先切歌再删上一条文件。
@@ -533,11 +684,13 @@ class ChatViewModel(
     private data class AppliedDialog(val line: DisplayLine, val sprite: SpriteView?)
 
     // 绑定声音卡片的角色由云语音承担台词，本地 preset/fallback 录音静音让位。
+    // 主控台词即使没有云语音也不播本地录音，避免固定台词被误认成朗读。
     private fun applyDialog(
         dialog: Dialog,
         prev: SpriteView?,
         playVoice: Boolean,
         boundCard: VoiceCard? = null,
+        suppressLocalVoice: Boolean = false,
     ): AppliedDialog {
         val name = dialog.name.trim()
         val speaker = charactersByName[name]
@@ -556,7 +709,7 @@ class ChatViewModel(
         }
 
         val next = resolveSprite(speaker, dialog.sprite)
-        if (playVoice && boundCard == null && next != null &&
+        if (playVoice && !suppressLocalVoice && boundCard == null && next != null &&
             (prev?.characterId != speaker.id || prev.spriteIndex != next.spriteIndex)
         ) {
             playSpriteVoice(speaker, next.spriteIndex)
@@ -646,10 +799,8 @@ class ChatViewModel(
         }
     }
 
-    private fun persistAssistant(rawText: String, complete: Boolean) {
+    private suspend fun persistAssistant(rawText: String, complete: Boolean) {
         if (rawText.isBlank()) return
-        viewModelScope.launch {
-            sessionRepo.appendAssistantResult(sessionId, rawText, complete)
-        }
+        sessionRepo.appendAssistantResult(sessionId, rawText, complete)
     }
 }

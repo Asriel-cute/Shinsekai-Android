@@ -28,6 +28,9 @@ private const val TEST_PROMPT = "只回复两个字符:ok"
 // 连通性测试的输出硬上限：16 是 Responses API 的最小允许值；只判定 2xx，截断无影响。
 private const val TEST_MAX_OUTPUT_TOKENS = 16
 
+// 摘要输出上限只经提示词与请求参数约束，前端不做硬截断。
+private const val SUMMARY_MAX_OUTPUT_TOKENS = 2048
+
 /** 提供商差异的完整封装：端点、鉴权、请求体与各类响应解析。 */
 internal interface ProviderSpec {
     /** 流式对话端点（相对 baseUrl）。 */
@@ -50,6 +53,15 @@ internal interface ProviderSpec {
     ): RequestBody
 
     fun buildTestBody(json: Json, model: String): RequestBody
+
+    /** 非流式摘要端点；与连通性测试端点一致（Google 需要 generateContent 形态）。 */
+    fun summaryUrl(model: String): String = testUrl(model)
+
+    /** 手动压缩用的非流式纯文本请求。 */
+    fun buildSummaryBody(json: Json, model: String, system: String, user: String): RequestBody
+
+    /** 解析非流式摘要响应正文；无文本返回 null。 */
+    fun parseSummary(body: String): String?
 
     /** 解析 SSE data 负载（OpenAI 的 [DONE] 哨兵由调用方处理）。 */
     fun parseSseData(payload: JsonObject): SseParseResult
@@ -134,6 +146,15 @@ private data class ResponsesTestRequest(
     @SerialName("max_output_tokens") val maxOutputTokens: Int = TEST_MAX_OUTPUT_TOKENS,
 )
 
+// system 摘要指令随 input 进入；不带 json 格式约束。
+@Serializable
+private data class ResponsesSummaryRequest(
+    val model: String,
+    val input: List<InputItem>,
+    val stream: Boolean = false,
+    @SerialName("max_output_tokens") val maxOutputTokens: Int = SUMMARY_MAX_OUTPUT_TOKENS,
+)
+
 internal object ResponsesSpec : ProviderSpec {
     override fun streamUrl(model: String) = "responses"
     override fun modelsUrl() = "models"
@@ -154,6 +175,34 @@ internal object ResponsesSpec : ProviderSpec {
             input = listOf(InputItem(role = Role.user, content = TEST_PROMPT)),
         ),
     ).toRequestBody(jsonMediaType)
+
+    override fun buildSummaryBody(
+        json: Json,
+        model: String,
+        system: String,
+        user: String,
+    ): RequestBody = json.encodeToString(
+        ResponsesSummaryRequest(
+            model = model,
+            input = listOf(
+                InputItem(role = Role.system, content = system),
+                InputItem(role = Role.user, content = user),
+            ),
+        ),
+    ).toRequestBody(jsonMediaType)
+
+    // output[].content[] 里 type=output_text 的部分拼接。
+    override fun parseSummary(body: String): String? {
+        val output = parseObj(body)?.arr("output") ?: return null
+        val text = buildString {
+            for (item in output.objs()) {
+                for (part in item.arr("content")?.objs().orEmpty()) {
+                    if (part.str("type") == "output_text") append(part.str("text").orEmpty())
+                }
+            }
+        }
+        return text.ifEmpty { null }
+    }
 
     override fun parseSseData(payload: JsonObject): SseParseResult = when (payload.str("type")) {
         "response.output_text.delta" ->
@@ -199,6 +248,15 @@ private data class ChatCompletionsTestRequest(
     @SerialName("max_completion_tokens") val maxCompletionTokens: Int = TEST_MAX_OUTPUT_TOKENS,
 )
 
+// 不带 response_format，输出为纯文本总结。
+@Serializable
+private data class ChatCompletionsSummaryRequest(
+    val model: String,
+    val messages: List<ChatCompletionsRequest.Message>,
+    val stream: Boolean = false,
+    @SerialName("max_completion_tokens") val maxCompletionTokens: Int = SUMMARY_MAX_OUTPUT_TOKENS,
+)
+
 internal object ChatCompletionsSpec : ProviderSpec {
     override fun streamUrl(model: String) = "chat/completions"
     override fun modelsUrl() = "models"
@@ -224,6 +282,26 @@ internal object ChatCompletionsSpec : ProviderSpec {
             messages = listOf(ChatCompletionsRequest.Message(role = Role.user, content = TEST_PROMPT)),
         ),
     ).toRequestBody(jsonMediaType)
+
+    override fun buildSummaryBody(
+        json: Json,
+        model: String,
+        system: String,
+        user: String,
+    ): RequestBody = json.encodeToString(
+        ChatCompletionsSummaryRequest(
+            model = model,
+            messages = listOf(
+                ChatCompletionsRequest.Message(role = Role.system, content = system),
+                ChatCompletionsRequest.Message(role = Role.user, content = user),
+            ),
+        ),
+    ).toRequestBody(jsonMediaType)
+
+    // choices[0].message.content。
+    override fun parseSummary(body: String): String? =
+        parseObj(body)?.arr("choices")?.objs()?.firstOrNull()
+            ?.obj("message")?.str("content")?.ifEmpty { null }
 
     override fun parseSseData(payload: JsonObject): SseParseResult {
         // 部分网关在流中以 error 对象报错。
@@ -270,6 +348,16 @@ private data class AnthropicTestRequest(
     @SerialName("max_tokens") val maxTokens: Long = TEST_MAX_OUTPUT_TOKENS.toLong(),
 )
 
+// system 走顶层字段；不开 thinking，输出为纯文本总结。
+@Serializable
+private data class AnthropicSummaryRequest(
+    val model: String,
+    val system: String,
+    val messages: List<AnthropicRequest.Message>,
+    val stream: Boolean = false,
+    @SerialName("max_tokens") val maxTokens: Long = SUMMARY_MAX_OUTPUT_TOKENS.toLong(),
+)
+
 internal object AnthropicSpec : ProviderSpec {
     override fun streamUrl(model: String) = "v1/messages"
     // 默认 limit=20，拉满到 1000。
@@ -303,6 +391,28 @@ internal object AnthropicSpec : ProviderSpec {
             messages = listOf(AnthropicRequest.Message(role = Role.user, content = TEST_PROMPT)),
         ),
     ).toRequestBody(jsonMediaType)
+
+    override fun buildSummaryBody(
+        json: Json,
+        model: String,
+        system: String,
+        user: String,
+    ): RequestBody = json.encodeToString(
+        AnthropicSummaryRequest(
+            model = model,
+            system = system,
+            messages = listOf(AnthropicRequest.Message(role = Role.user, content = user)),
+        ),
+    ).toRequestBody(jsonMediaType)
+
+    // content[] 里 text 块拼接。
+    override fun parseSummary(body: String): String? {
+        val text = parseObj(body)?.arr("content")?.objs()
+            ?.mapNotNull { it.str("text") }
+            ?.joinToString("")
+            .orEmpty()
+        return text.ifEmpty { null }
+    }
 
     override fun parseSseData(payload: JsonObject): SseParseResult = when (payload.str("type")) {
         "content_block_delta" -> {
@@ -369,6 +479,17 @@ private data class GoogleTestRequest(
     data class GenerationConfig(val maxOutputTokens: Int = TEST_MAX_OUTPUT_TOKENS)
 }
 
+// 摘要输出纯文本，不能带 responseMimeType=application/json。
+@Serializable
+private data class GoogleSummaryRequest(
+    val contents: List<GoogleRequest.Content>,
+    val systemInstruction: GoogleRequest.Content? = null,
+    val generationConfig: GenerationConfig = GenerationConfig(),
+) {
+    @Serializable
+    data class GenerationConfig(val maxOutputTokens: Int = SUMMARY_MAX_OUTPUT_TOKENS)
+}
+
 internal object GoogleSpec : ProviderSpec {
     override fun streamUrl(model: String) =
         "v1beta/models/${model.removePrefix("models/")}:streamGenerateContent?alt=sse"
@@ -420,6 +541,29 @@ internal object GoogleSpec : ProviderSpec {
             ),
         ),
     ).toRequestBody(jsonMediaType)
+
+    override fun buildSummaryBody(
+        json: Json,
+        model: String,
+        system: String,
+        user: String,
+    ): RequestBody = json.encodeToString(
+        GoogleSummaryRequest(
+            contents = listOf(
+                GoogleRequest.Content(
+                    role = "user",
+                    parts = listOf(GoogleRequest.Content.Part(user)),
+                ),
+            ),
+            systemInstruction = GoogleRequest.Content(
+                parts = listOf(GoogleRequest.Content.Part(system)),
+            ),
+        ),
+    ).toRequestBody(jsonMediaType)
+
+    // 复用流式的 candidates 文本提取。
+    override fun parseSummary(body: String): String? =
+        candidateText(parseObj(body))?.ifEmpty { null }
 
     override fun parseSseData(payload: JsonObject): SseParseResult {
         payload.obj("error")?.let { return SseParseResult.Failed(it.str("message") ?: "上游返回错误") }

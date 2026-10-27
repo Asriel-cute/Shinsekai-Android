@@ -15,8 +15,9 @@ data object VoicesRoute : NavKey
 @Serializable
 data object SettingsRoute : NavKey
 
+// 新建与编辑共用；sessionId 为空表示新建。
 @Serializable
-data object NewSessionRoute : NavKey
+data class SessionSetupRoute(val sessionId: String? = null) : NavKey
 
 @Serializable
 data class ChatRoute(val sessionId: String) : NavKey

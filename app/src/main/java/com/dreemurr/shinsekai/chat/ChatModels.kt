@@ -58,3 +58,7 @@ data class Dialog(
     val speech: String = "",
     val translate: String = "",
 )
+
+// 打断播放时重建 assistant 原文，保持与 LLM 契约一致。
+@Serializable
+data class DialogPayload(val dialog: List<Dialog>)
