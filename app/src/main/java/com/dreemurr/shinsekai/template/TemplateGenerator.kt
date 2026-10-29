@@ -24,12 +24,14 @@ object TemplateGenerator {
         val names = characters.joinToString("，") { it.name }
         val (spriteChars, plainChars) = characters.partition { it.sprites.isNotEmpty() }
         val settingChars = characters.filter { it.characterSetting.isNotBlank() }
-        // 仅非中文目标需要 translate；按角色 id 取会话创建时的语言快照。
+        // 有语言快照才要求 translate；按角色 id 取会话创建时的快照，Auto 由模型自判语言。
         val translationTargets = characters.mapNotNull { character ->
-            val name = when (VoiceLanguages.normalize(voiceLanguages[character.id])) {
+            val snapshot = voiceLanguages[character.id] ?: return@mapNotNull null
+            val name = when (VoiceLanguages.normalize(snapshot)) {
                 VoiceLanguages.JA -> "日语"
                 VoiceLanguages.EN -> "英语"
-                else -> return@mapNotNull null
+                VoiceLanguages.ZH -> "中文"
+                else -> "自动"
             }
             character.name to name
         }
@@ -39,7 +41,7 @@ object TemplateGenerator {
             1536 + characters.sumOf { it.name.length + it.emotionTags.length + it.characterSetting.length },
         ) {
             append("出场人物有：").append(names).append("\n\n")
-            appendJsonContract(spriteChars.isNotEmpty())
+            appendJsonContract()
             appendSpriteGuide(spriteChars)
             appendCharacterSettings(settingChars)
             appendPlayerSection(player)
@@ -60,7 +62,7 @@ object TemplateGenerator {
         }
     }
 
-    private fun StringBuilder.appendJsonContract(hasSprites: Boolean) {
+    private fun StringBuilder.appendJsonContract() {
         append(
             """
             每次输出时，必须严格使用 JSON 格式，结构为：
@@ -68,9 +70,9 @@ object TemplateGenerator {
             "dialog": [
                 {
                 "name": "角色名",
-                "sprite": "${if (hasSprites) "str, 对应的立绘ID字符串，例如 01, 02" else "str, 固定为 -1"}",
-                "speech": "该角色说的简体中文台词",
-                "translate": "目标语言译文（仅合成用，无翻译要求的角色省略）"
+                "sprite": "str, 立绘代号，无立绘或旁白固定为 -1",
+                "speech": "前端展示的台词",
+                "translate": "语音合成用的朗读文本（无要求的角色省略）"
                 }
             ]
             }""".trimIndent(),
@@ -122,7 +124,7 @@ object TemplateGenerator {
         rule("格式严格：输出内容必须严格且仅为 JSON 格式。")
         rule("角色名限制：name 字段只能是以下之一：$names 以及其他可能出现的人物名，或者固定关键字：旁白。")
         appendSpriteRules(spriteChars, plainChars)
-        rule("台词风格：speech 字段中的台词须为简体中文，内容尽量符合角色个性、说话方式与背景设定。")
+        rule("台词风格：speech 字段须为简体中文，内容尽量符合角色个性、说话方式与背景设定。")
         appendTranslationRules(translationTargets)
         // 仅提示模型按句意拆条，不在前端截断。
         rule("篇幅控制：每个元素的 speech 字段不超过 500 字左右；内容多时必须按句意拆成多个元素，即同一角色连续说话或中间情绪变化就拆成多个元素。")
@@ -136,8 +138,8 @@ object TemplateGenerator {
         val grouped = targets.groupBy({ it.second }, { it.first })
             .entries
             .joinToString("；") { (language, names) -> "${names.joinToString("、")}→$language" }
-        rule("翻译字段：$grouped。上述角色每条台词必须输出非空 translate，内容须为该句 speech 的目标语言译文，仅用于语音合成；不得包含动作、表情、心理、旁白、角色名或解释，不得增删改写。")
-        rule("翻译范围：未列出的角色、旁白、陌生角色及 speech 为空的条目不填 translate；speech 仍须为简体中文。")
+        rule("翻译字段：$grouped。上述角色每条台词必须输出目标语言的非空 translate，自动则自行判断目标语言，仅用于语音合成；不得包含动作、表情、心理、旁白或解释等。")
+        rule("翻译范围：未列出的角色、旁白、陌生角色及 speech 为空的条目不填 translate。")
     }
 
     private fun StringBuilder.appendSpriteRules(spriteChars: List<Character>, plainChars: List<Character>) {

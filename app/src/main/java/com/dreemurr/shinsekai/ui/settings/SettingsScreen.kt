@@ -20,12 +20,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -53,6 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -67,6 +73,7 @@ import com.dreemurr.shinsekai.chat.OpenAiApiType
 import com.dreemurr.shinsekai.chat.ProviderConfig
 import com.dreemurr.shinsekai.chat.ReasoningEffort
 import com.dreemurr.shinsekai.di.LocalAppContainer
+import com.dreemurr.shinsekai.settings.ThemeMode
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -75,7 +82,7 @@ private const val RELEASES_URL = "https://github.com/Asriel-cute/Shinsekai-Andro
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onShowOnboarding: () -> Unit) {
     val container = LocalAppContainer.current
     val vm: SettingsViewModel = viewModel(
         factory = viewModelFactory {
@@ -85,6 +92,7 @@ fun SettingsScreen() {
     val saved by vm.settings.collectAsStateWithLifecycle()
     val modelsState by vm.modelsState.collectAsStateWithLifecycle()
     val testState by vm.testState.collectAsStateWithLifecycle()
+    val themeMode by vm.themeMode.collectAsStateWithLifecycle()
 
     // 只初始化一次；已就绪时首帧直接使用仓库数据，避免空表单闪动与浮动标签动画掉帧。
     var form by remember { mutableStateOf(saved) }
@@ -294,13 +302,33 @@ fun SettingsScreen() {
                 )
             }
 
-            // 关于：当前版本与检查更新入口。
+            // 外观：主题下拉选择，即时生效，不走「保存」按钮。
+            SettingsPanel(stringResource(R.string.settings_panel_appearance)) {
+                LabeledDropdown(
+                    label = stringResource(R.string.settings_theme_label),
+                    options = ThemeModeOptions,
+                    selected = themeMode,
+                    onSelect = vm::setThemeMode,
+                )
+            }
+
+            // 关于：当前版本、重看新手引导与检查更新入口。
             SettingsPanel(stringResource(R.string.settings_panel_about)) {
                 Text(
                     stringResource(R.string.settings_version_format, BuildConfig.VERSION_NAME),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                OutlinedButton(
+                    onClick = onShowOnboarding,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                ) {
+                    Text(stringResource(R.string.settings_show_onboarding))
+                }
 
                 OutlinedButton(
                     onClick = {
@@ -463,6 +491,53 @@ private fun <T> LabeledSegmentedRow(
     }
 }
 
+// 标签 + 下拉选择，与 LabeledSegmentedRow 同款布局；选项为「值 → 文案资源」。
+@Composable
+private fun <T> LabeledDropdown(
+    label: String,
+    options: List<Pair<T, Int>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    stringResource(options.first { it.first == selected }.second),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                options.forEach { (value, textRes) ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(textRes)) },
+                        onClick = {
+                            onSelect(value)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
 // 更新单个提供商的草稿配置，其余提供商不受影响。
 private fun AllProviderSettings.withConfig(
     provider: LlmProvider,
@@ -487,4 +562,10 @@ private val EffortOptions = listOf(
     ReasoningEffort.low.name to R.string.effort_low,
     ReasoningEffort.high.name to R.string.effort_high,
     ReasoningEffort.max.name to R.string.effort_max,
+)
+
+private val ThemeModeOptions = listOf(
+    ThemeMode.SYSTEM to R.string.theme_system,
+    ThemeMode.LIGHT to R.string.theme_light,
+    ThemeMode.DARK to R.string.theme_dark,
 )

@@ -518,7 +518,7 @@ class ChatViewModel(
     }
 
     // 入队并按需发起云语音预取：说话者绑定可用卡片且有台词才合成。
-    // 语言目标只认新建会话快照；缺少快照/目标语译文时跳过该条，不回退本地立绘语音。
+    // 语言目标只认新建会话快照；缺少快照/translate 时跳过该条，不回退本地立绘语音。
     private fun enqueueDialog(dialog: Dialog) {
         enqueuedDialogs++
         val name = dialog.name.trim()
@@ -543,13 +543,12 @@ class ChatViewModel(
         // 无快照：静默跳过云 TTS，不回退当前卡片语言。
         val snapshot = sessionVoiceLanguages[speaker.id] ?: return null
         val target = VoiceLanguages.normalize(snapshot)
-        val needsTranslation = target == VoiceLanguages.JA || target == VoiceLanguages.EN
-        val translated = dialog.translate.trim()
-        if (needsTranslation && translated.isBlank()) {
+        // 朗读文本一律取 translate：ja/en 为译文、zh 为纯台词、Auto 为模型自判语言。
+        val text = dialog.translate.trim()
+        if (text.isEmpty()) {
             ttsMissingTranslationNames.add(speaker.name)
             return null
         }
-        val text = if (needsTranslation) translated else dialog.speech.trim()
         val job = CloudJob(
             card = boundCard,
             provider = provider,

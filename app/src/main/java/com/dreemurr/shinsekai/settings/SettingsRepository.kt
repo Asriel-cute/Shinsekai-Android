@@ -3,6 +3,7 @@ package com.dreemurr.shinsekai.settings
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -14,6 +15,7 @@ import com.dreemurr.shinsekai.chat.OpenAiApiType
 import com.dreemurr.shinsekai.chat.ProviderConfig
 import com.dreemurr.shinsekai.chat.ReasoningEffort
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -31,14 +33,27 @@ class SettingsRepository(
     private val appContext = context.applicationContext
     private val cipher = ApiKeyCipher()
 
-    /** 全量配置（含全部提供商），供设置页编辑。 */
-    val allSettings: StateFlow<AllProviderSettings> = appContext.settingsDataStore.data
+    // 统一读取流；读取失败回退空配置，避免首启崩溃。
+    private val preferences: Flow<Preferences> = appContext.settingsDataStore.data
         .catch { e ->
             e.printStackTrace()
             emit(emptyPreferences())
         }
+
+    /** 全量配置（含全部提供商），供设置页编辑。 */
+    val allSettings: StateFlow<AllProviderSettings> = preferences
         .map { p -> readAll(p) }
         .stateIn(scope, SharingStarted.Eagerly, AllProviderSettings())
+
+    /** 新手引导是否已完成；null 表示尚未读取，缺失 key 或读取失败均视为未完成。 */
+    val onboardingCompleted: StateFlow<Boolean?> = preferences
+        .map { p -> p[ONBOARDING_COMPLETED] ?: false }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** 主题模式；未设置或读取失败按跟随系统。 */
+    val themeMode: StateFlow<ThemeMode> = preferences
+        .map { p -> p[THEME_MODE].toEnum(ThemeMode.SYSTEM) }
+        .stateIn(scope, SharingStarted.Eagerly, ThemeMode.SYSTEM)
 
     /** 激活提供商展开后的有效配置，供聊天链路。 */
     val settings: StateFlow<ChatSettings> = allSettings
@@ -69,6 +84,20 @@ class SettingsRepository(
             p.remove(LEGACY_BASE_URL)
             p.remove(LEGACY_API_KEY_CIPHER)
             p.remove(LEGACY_MODEL_NAME)
+        }
+    }
+
+    /** 标记新手引导已完成；结束/跳过/重看离开时写入。 */
+    suspend fun completeOnboarding() {
+        appContext.settingsDataStore.edit { p ->
+            p[ONBOARDING_COMPLETED] = true
+        }
+    }
+
+    /** 主题选择即时生效并落盘。 */
+    suspend fun setThemeMode(mode: ThemeMode) {
+        appContext.settingsDataStore.edit { p ->
+            p[THEME_MODE] = mode.name
         }
     }
 
@@ -109,6 +138,8 @@ class SettingsRepository(
         private fun providerKey(provider: LlmProvider, suffix: String) =
             stringPreferencesKey("${provider.name.lowercase()}_$suffix")
 
+        private val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        private val THEME_MODE = stringPreferencesKey("theme_mode")
         private val ACTIVE_PROVIDER = stringPreferencesKey("active_provider")
         private val OPENAI_API_TYPE = stringPreferencesKey("openai_api_type")
         private val REASONING_EFFORT = stringPreferencesKey("reasoning_effort")

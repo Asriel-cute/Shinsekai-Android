@@ -12,7 +12,7 @@ data class ChatSession(
     // 用户扮演的主控角色；空=未设置。至少 2 名角色时才有效。
     val playerCharacterId: String? = null,
     // 新建会话时的语言快照：characterId → zh/ja/en。
-    // 空串=自动；键缺失=无快照，跳过云 TTS。
+    // 空串=自动（translate 由模型自判语言）；键缺失=无快照，跳过云 TTS。
     val voiceLanguages: Map<String, String> = emptyMap(),
     // 会话级云语音开关；关闭后绑定卡片不再合成，回退本地立绘语音。
     val cloudTtsEnabled: Boolean = true,

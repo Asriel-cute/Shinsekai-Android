@@ -9,6 +9,7 @@ import com.dreemurr.shinsekai.chat.LlmProvider
 import com.dreemurr.shinsekai.chat.ModelsResult
 import com.dreemurr.shinsekai.chat.ProviderConfig
 import com.dreemurr.shinsekai.di.AppContainer
+import com.dreemurr.shinsekai.settings.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +31,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     val settings = container.settingsRepository.allSettings
 
+    val themeMode = container.settingsRepository.themeMode
+
     private val _modelsState = MutableStateFlow<ModelsUiState>(ModelsUiState.Idle)
     val modelsState: StateFlow<ModelsUiState> = _modelsState.asStateFlow()
 
@@ -49,6 +52,15 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 },
             ),
         )
+    }
+
+    // 主题选择立即生效；重复选当前主题直接忽略，失败仅记录，不打断界面。
+    fun setThemeMode(mode: ThemeMode) {
+        if (themeMode.value == mode) return
+        viewModelScope.launch {
+            runCatching { container.settingsRepository.setThemeMode(mode) }
+                .onFailure { it.printStackTrace() }
+        }
     }
 
     // 用当前编辑中的草稿拉取模型列表（无需先保存）。

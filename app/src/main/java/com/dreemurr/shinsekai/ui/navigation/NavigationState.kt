@@ -68,8 +68,11 @@ class NavigationState(
 
     // 起始栈始终在用；其他栈只激活当前 Tab，但保留未激活栈状态。
     private val stacksInUse: List<NavKey>
-        get() = if (topLevelRoute == startRoute) listOf(startRoute)
-        else listOf(startRoute, topLevelRoute)
+        get() = if (topLevelRoute == startRoute) {
+            listOf(startRoute)
+        } else {
+            listOf(startRoute, topLevelRoute)
+        }
 }
 
 class AppNavigator(val state: NavigationState) {
@@ -77,7 +80,7 @@ class AppNavigator(val state: NavigationState) {
     fun navigate(route: NavKey) {
         if (route in state.backStacks.keys) {
             state.topLevelRoute = route
-        } else if(state.backStacks[state.topLevelRoute]?.lastOrNull() != route) {
+        } else if (state.backStacks[state.topLevelRoute]?.lastOrNull() != route) {
             state.backStacks[state.topLevelRoute]?.add(route)
         }
     }
