@@ -58,6 +58,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.dreemurr.shinsekai.R
+import com.dreemurr.shinsekai.background.Background
 import com.dreemurr.shinsekai.character.Character
 import com.dreemurr.shinsekai.di.LocalAppContainer
 import com.dreemurr.shinsekai.ui.common.ColorDot
@@ -80,6 +81,7 @@ fun SessionSetupScreen(
         },
     )
     val characters by vm.characters.collectAsStateWithLifecycle()
+    val backgrounds by vm.backgrounds.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
     val existing by vm.existing.collectAsStateWithLifecycle()
     val isEdit = sessionId != null
@@ -93,11 +95,15 @@ fun SessionSetupScreen(
     var scenario by rememberSaveable(sessionKey) { mutableStateOf(existing?.scenario ?: "") }
     var cloudTts by rememberSaveable(sessionKey) { mutableStateOf(existing?.cloudTtsEnabled ?: true) }
     var playerId by rememberSaveable(sessionKey) { mutableStateOf(existing?.playerCharacterId) }
+    var backgroundId by rememberSaveable(sessionKey) { mutableStateOf(existing?.backgroundId) }
     var saving by remember { mutableStateOf(false) }
 
     val selectedCharacters = characters.filter { it.id in selectedIds }
     val selectedPlayer = selectedCharacters.firstOrNull { it.id == playerId }
     val playerSelectable = selectedIds.size >= 2
+    val selectedBackground = backgrounds.firstOrNull { it.id == backgroundId }
+    // 编辑时原绑定背景包已不存在（delegated 属性不能 smart cast，用安全调用）。
+    val backgroundMissing = existing?.backgroundId != null && selectedBackground == null
 
     fun toggle(id: String, checked: Boolean) {
         val next = if (checked) selectedIds + id else selectedIds - id
@@ -145,6 +151,7 @@ fun SessionSetupScreen(
                             scenario = scenario,
                             cloudTtsEnabled = cloudTts,
                             playerCharacterId = selectedPlayer?.id,
+                            backgroundId = backgroundId,
                         ) { id ->
                             saving = false
                             onSaved(id)
@@ -268,6 +275,35 @@ fun SessionSetupScreen(
                 }
             }
             item {
+                Column {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.session_setup_background),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        stringResource(R.string.session_setup_background_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    BackgroundPicker(
+                        selected = selectedBackground,
+                        backgrounds = backgrounds,
+                        onSelect = { backgroundId = it },
+                    )
+                    if (backgroundMissing) {
+                        Text(
+                            stringResource(R.string.session_setup_background_missing),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
+            }
+            item {
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = scenario,
@@ -300,6 +336,59 @@ fun SessionSetupScreen(
                 }
             }
             item { Spacer(Modifier.height(8.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun BackgroundPicker(
+    selected: Background?,
+    backgrounds: List<Background>,
+    onSelect: (String?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                selected?.name ?: stringResource(R.string.session_setup_background_none),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.session_setup_background_none)) },
+                onClick = {
+                    onSelect(null)
+                    expanded = false
+                },
+            )
+            backgrounds.forEach { background ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            background.name,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = {
+                        onSelect(background.id)
+                        expanded = false
+                    },
+                )
+            }
         }
     }
 }

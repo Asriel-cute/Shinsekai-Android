@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.dreemurr.shinsekai.chat.AllProviderSettings
@@ -55,6 +56,11 @@ class SettingsRepository(
         .map { p -> p[THEME_MODE].toEnum(ThemeMode.SYSTEM) }
         .stateIn(scope, SharingStarted.Eagerly, ThemeMode.SYSTEM)
 
+    /** BGM 音量（0..1），全局设置；未设置按默认值 0.3。 */
+    val bgmVolume: StateFlow<Float> = preferences
+        .map { p -> p[BGM_VOLUME] ?: DEFAULT_BGM_VOLUME }
+        .stateIn(scope, SharingStarted.Eagerly, DEFAULT_BGM_VOLUME)
+
     /** 激活提供商展开后的有效配置，供聊天链路。 */
     val settings: StateFlow<ChatSettings> = allSettings
         .map { s ->
@@ -101,6 +107,13 @@ class SettingsRepository(
         }
     }
 
+    /** BGM 音量即时生效并落盘。 */
+    suspend fun setBgmVolume(volume: Float) {
+        appContext.settingsDataStore.edit { p ->
+            p[BGM_VOLUME] = volume.coerceIn(0f, 1f)
+        }
+    }
+
     // 旧版单配置 key 首次读取时回退到 OpenAI（Responses）配置，保存后清理。
     private fun readAll(p: Preferences): AllProviderSettings {
         val openai = ProviderConfig(
@@ -140,6 +153,8 @@ class SettingsRepository(
 
         private val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         private val THEME_MODE = stringPreferencesKey("theme_mode")
+        private val BGM_VOLUME = floatPreferencesKey("bgm_volume")
+        private const val DEFAULT_BGM_VOLUME = 0.3f
         private val ACTIVE_PROVIDER = stringPreferencesKey("active_provider")
         private val OPENAI_API_TYPE = stringPreferencesKey("openai_api_type")
         private val REASONING_EFFORT = stringPreferencesKey("reasoning_effort")

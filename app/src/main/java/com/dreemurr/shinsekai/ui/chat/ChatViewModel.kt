@@ -3,13 +3,16 @@ package com.dreemurr.shinsekai.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dreemurr.shinsekai.R
+import com.dreemurr.shinsekai.background.Background
 import com.dreemurr.shinsekai.character.Character
 import com.dreemurr.shinsekai.chat.ChatStreamEvent
 import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.chat.Dialog
 import com.dreemurr.shinsekai.chat.DialogJsonParser
+import com.dreemurr.shinsekai.chat.PresentationKind
 import com.dreemurr.shinsekai.chat.Role
 import com.dreemurr.shinsekai.chat.TokenEstimator
+import com.dreemurr.shinsekai.chat.presentationKind
 import com.dreemurr.shinsekai.di.AppContainer
 import com.dreemurr.shinsekai.session.ChatSession
 import com.dreemurr.shinsekai.session.SessionEntry
@@ -44,8 +47,10 @@ class ChatViewModel(
 
     private val sessionRepo = container.sessionRepository
     private val characterRepo = container.characterRepository
+    private val backgroundRepo = container.backgroundRepository
     private val chatRepo = container.chatRepository
     private val voicePlayer = container.voicePlayer
+    private val bgmPlayer = container.bgmPlayer
 
     enum class Phase { WaitingInput, Streaming, Playing, Error }
 
@@ -77,6 +82,8 @@ class ChatViewModel(
         // 云语音合成等待中：期间点击不推进，台词待音频就绪再展示。
         val synthesizing: Boolean = false,
         val sprite: SpriteView? = null,
+        // 当前场景背景图；null=无背景包或尚无场景。
+        val backgroundImage: File? = null,
         val error: String? = null,
         val notConfigured: Boolean = false,
         // 主控角色名；仅用于输入提示与记录面板标签。
@@ -123,6 +130,12 @@ class ChatViewModel(
     // 主控角色；主控台词不播本地立绘语音，只走云语音或静默展示。
     private var playerCharacterId: String? = null
 
+    // 会话绑定的背景包；null=无背景，SCENE/bgm 条目按编号切换场景与音乐。
+    private var sessionBackground: Background? = null
+
+    // 会话期内是否已播放过 BGM，用于重进/回溯后判断是否回落到第 1 首。
+    private var bgmStarted = false
+
     // 云语音任务：只有需要合成时才创建，pending 在完成后给出音频文件（null = 失败/无音频）。
     private class CloudJob(
         val card: VoiceCard,
@@ -135,11 +148,13 @@ class ChatViewModel(
 
     // 队列元素：boundCard 非空即由绑定卡片承担语音，合成跳过时也抑制本地立绘语音。
     // suppressLocalVoice 用于主控：固定立绘录音不能被当成用户台词的朗读。
+    // presentation 为 SCENE/bgm 展示条目：只切换场景/BGM，不展示台词。
     private class QueuedDialog(
         val dialog: Dialog,
         val boundCard: VoiceCard? = null,
         val cloud: CloudJob? = null,
         val suppressLocalVoice: Boolean = false,
+        val presentation: Boolean = false,
     )
 
     private val queue = ArrayDeque<QueuedDialog>()
@@ -174,8 +189,10 @@ class ChatViewModel(
                     val character = byId[id] ?: continue
                     charactersByName.putIfAbsent(character.name, character)
                 }
-                replayHistory(session)
                 applySession(session)
+                replayHistory(session)
+                // 历史中没有 SCENE/bgm 时回落到场景 1 + BGM 1。
+                initPresentationDefaults()
                 // 每次进入聊天页检测一次；超限弹窗由用户决定是否压缩。
                 _state.update {
                     it.copy(showCompressConfirm = it.tokenEstimate > ContextCompressor.MAX_CONTEXT_TOKENS)
@@ -189,6 +206,10 @@ class ChatViewModel(
                 .distinctUntilChanged()
                 .collect { applySession(it) }
         }
+        // 全局 BGM 音量实时生效。
+        viewModelScope.launch {
+            container.settingsRepository.bgmVolume.collect { bgmPlayer.setVolume(it) }
+        }
     }
 
     // 同步会话级字段与派生 UI 状态；快照/开关语义见各字段注释。
@@ -196,6 +217,8 @@ class ChatViewModel(
         sessionVoiceLanguages = session.voiceLanguages
         cloudTtsEnabled = session.cloudTtsEnabled
         playerCharacterId = session.playerCharacterId
+        sessionBackground = session.backgroundId
+            ?.let { id -> backgroundRepo.backgrounds.value.firstOrNull { it.id == id } }
         val byId = characterRepo.characters.value.associateBy { it.id }
         val playerName = session.playerCharacterId?.let(byId::get)?.name
         _state.update {
@@ -205,6 +228,40 @@ class ChatViewModel(
                 history = session.history,
                 tokenEstimate = TokenEstimator.estimate(sessionRepo.buildInput(session)),
             )
+        }
+    }
+
+    // 无任何 SCENE/bgm 记录时按背景包默认开场：场景 1 + BGM 1。
+    private fun initPresentationDefaults() {
+        if (_state.value.backgroundImage == null) applyScene(0)
+        if (!bgmStarted) applyBgm(0)
+    }
+
+    // SCENE/bgm 展示条目：按编号切换背景图/BGM；越界或缺素材静默忽略。
+    private fun applyPresentation(dialog: Dialog) {
+        val number = dialog.sprite.trim().toIntOrNull() ?: return
+        if (number < 1) return
+        when (presentationKind(dialog.name)) {
+            PresentationKind.Scene -> applyScene(number - 1)
+            PresentationKind.Bgm -> applyBgm(number - 1)
+            null -> Unit
+        }
+    }
+
+    // 切换场景图；无背景包或素材缺失时保持原画面。
+    private fun applyScene(index: Int) {
+        val background = sessionBackground ?: return
+        backgroundRepo.sceneImage(background.id, index)?.let { file ->
+            _state.update { it.copy(backgroundImage = file) }
+        }
+    }
+
+    // 切换 BGM；无背景包或素材缺失时保持原曲目。
+    private fun applyBgm(index: Int) {
+        val background = sessionBackground ?: return
+        backgroundRepo.bgmFile(background.id, index)?.let { file ->
+            bgmStarted = true
+            bgmPlayer.play(file)
         }
     }
 
@@ -326,19 +383,28 @@ class ChatViewModel(
         _state.update { it.copy(typing = false, synthesizing = false, queueSize = 0) }
     }
 
-    // 截断/压缩后重放剩余历史，恢复最后一句与立绘记忆。
+    // 截断/压缩后重放剩余历史，恢复最后一句、立绘记忆与场景/BGM 状态。
     private fun restoreFromHistory() {
         spriteMemory.clear()
         terminal = null
         parsedAnyDialog = false
         enqueuedDialogs = 0
         playedDialogs.clear()
+        bgmStarted = false
         _state.update {
-            it.copy(line = null, sprite = null, typing = false, queueSize = 0, error = null)
+            it.copy(
+                line = null,
+                sprite = null,
+                typing = false,
+                queueSize = 0,
+                error = null,
+                backgroundImage = null,
+            )
         }
         _visibleSpeech.value = ""
         val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId } ?: return
         replayHistory(session)
+        initPresentationDefaults()
     }
 
     fun consumeNotConfigured() {
@@ -421,7 +487,19 @@ class ChatViewModel(
             }
         }
         voicePlayer.release()
+        // 离开聊天页即停 BGM；重进按历史记录恢复。
+        bgmPlayer.stop()
         cleanTtsFiles()
+    }
+
+    // 音量滑条拖动中实时试听，不落盘。
+    fun previewBgmVolume(volume: Float) {
+        bgmPlayer.setVolume(volume)
+    }
+
+    // 滑条松手时持久化；收集器会把同一音量再同步一次给播放器。
+    fun setBgmVolume(volume: Float) {
+        viewModelScope.launch { container.settingsRepository.setBgmVolume(volume) }
     }
 
     private fun checkConfigured(): Boolean {
@@ -521,6 +599,11 @@ class ChatViewModel(
     // 语言目标只认新建会话快照；缺少快照/translate 时跳过该条，不回退本地立绘语音。
     private fun enqueueDialog(dialog: Dialog) {
         enqueuedDialogs++
+        // SCENE/bgm 展示条目只切换场景/BGM，不参与台词展示与语音。
+        if (presentationKind(dialog.name) != null) {
+            queue.addLast(QueuedDialog(dialog, presentation = true))
+            return
+        }
         val name = dialog.name.trim()
         val speaker = charactersByName[name]
         // 主控台词一律不播本地立绘语音：固定录音不是用户台词的朗读。
@@ -644,7 +727,25 @@ class ChatViewModel(
     }
 
     private fun advanceInternal() {
-        val item = queue.removeFirstOrNull() ?: return
+        // 展示条目立即生效并自动续播：不占点击、不上屏、不播语音。
+        var drainedOnly = true
+        while (true) {
+            val item = queue.removeFirstOrNull() ?: break
+            if (!item.presentation) {
+                drainedOnly = false
+                launchAdvance(item)
+                return
+            }
+            applyPresentation(item.dialog)
+            // 已生效即计入已播，打断截断时保留在记录里供恢复。
+            playedDialogs.add(item.dialog)
+            _state.update { it.copy(queueSize = queue.size) }
+        }
+        // 队列被展示条目排空且本轮没有台词上屏时直接结算终止状态，避免白费一次点击。
+        if (drainedOnly && terminal != null) onBoxTap()
+    }
+
+    private fun launchAdvance(item: QueuedDialog) {
         val cloud = item.cloud
         val needsWait = cloud != null && !cloud.pending.isCompleted
         _state.update { it.copy(queueSize = queue.size, synthesizing = needsWait) }
@@ -752,13 +853,17 @@ class ChatViewModel(
         voicePlayer.play(voice, speaker.speechSpeed, speaker.speechVolume)
     }
 
-    // 历史回放不播语音、不打字，仅重建行和立绘记忆。
+    // 历史回放不播语音、不打字，仅重建行、立绘记忆与场景/BGM 状态。
     private fun replayHistory(session: ChatSession) {
         var lastApplied: AppliedDialog? = null
         var sprite = _state.value.sprite
         for (entry in session.history) {
             if (!entry.complete || entry.role != Role.assistant) continue
             for (dialog in DialogJsonParser.parseAll(entry.content)) {
+                if (presentationKind(dialog.name) != null) {
+                    applyPresentation(dialog)
+                    continue
+                }
                 val applied = applyDialog(dialog, sprite, playVoice = false)
                 sprite = applied.sprite
                 lastApplied = applied

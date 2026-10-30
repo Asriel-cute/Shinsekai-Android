@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -135,7 +136,9 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            SettingsPanel(stringResource(R.string.settings_panel_api)) {
+            // API 服务、模型与推理和测试/保存按钮同框展示，与外观、关于两张卡片保持一致。
+            SettingsCard {
+                SettingsSection(stringResource(R.string.settings_panel_api))
                 // 提供商选择：切换表单内容与激活项，各提供商草稿独立。
                 LabeledSegmentedRow(
                     label = stringResource(R.string.settings_provider_label),
@@ -195,9 +198,10 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-            }
 
-            SettingsPanel(stringResource(R.string.settings_panel_model)) {
+                SettingsDivider()
+
+                SettingsSection(stringResource(R.string.settings_panel_model))
                 // 同上，模型名随提供商切换整体换值，key 重建避免 label 浮动动画。
                 key(activeProvider) {
                     OutlinedTextField(
@@ -230,76 +234,78 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
                     selected = form.reasoningEffort,
                     onSelect = { form = form.copy(reasoningEffort = it) },
                 )
-            }
 
-            // 连通性测试：对当前编辑草稿发起一次真实小请求，结果经系统 Toast 提示。
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        val result = vm.testConnection(activeProvider, config)
-                        when (result) {
-                            is ConnectionTestResult.Success -> {
-                                val elapsed = String.format(Locale.ROOT, "%.1f", result.elapsedMs / 1000.0)
-                                Toast.makeText(
-                                    context,
-                                    String.format(Locale.ROOT, testSuccessFormat, elapsed),
-                                    Toast.LENGTH_SHORT,
-                                ).show()
+                SettingsDivider()
+
+                // 连通性测试：对当前编辑草稿发起一次真实小请求，结果经系统 Toast 提示。
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            val result = vm.testConnection(activeProvider, config)
+                            when (result) {
+                                is ConnectionTestResult.Success -> {
+                                    val elapsed = String.format(Locale.ROOT, "%.1f", result.elapsedMs / 1000.0)
+                                    Toast.makeText(
+                                        context,
+                                        String.format(Locale.ROOT, testSuccessFormat, elapsed),
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+
+                                is ConnectionTestResult.Failure ->
+                                    Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                             }
-
-                            is ConnectionTestResult.Failure ->
-                                Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                         }
+                    },
+                    enabled = !testState.running &&
+                        config.baseUrl.isNotBlank() && config.modelName.isNotBlank(),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                ) {
+                    if (testState.running) {
+                        CircularProgressIndicator(
+                            Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(8.dp))
                     }
-                },
-                enabled = !testState.running &&
-                    config.baseUrl.isNotBlank() && config.modelName.isNotBlank(),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp),
-            ) {
-                if (testState.running) {
-                    CircularProgressIndicator(
-                        Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
+                    Text(
+                        stringResource(
+                            if (testState.running) R.string.settings_test_running
+                            else R.string.action_test_connection,
+                        ),
                     )
-                    Spacer(Modifier.width(8.dp))
                 }
-                Text(
-                    stringResource(
-                        if (testState.running) R.string.settings_test_running
-                        else R.string.action_test_connection,
-                    ),
-                )
-            }
 
-            Button(
-                onClick = {
-                    scope.launch {
-                        try {
-                            vm.save(form)
-                            Toast.makeText(context, savedMsg, Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                            Toast.makeText(context, failedMsg, Toast.LENGTH_LONG).show()
+                Button(
+                    onClick = {
+                        scope.launch {
+                            try {
+                                vm.save(form)
+                                Toast.makeText(context, savedMsg, Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                Toast.makeText(context, failedMsg, Toast.LENGTH_LONG).show()
+                            }
                         }
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-            ) {
-                Text(
-                    stringResource(R.string.action_save),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.action_save),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
 
             // 外观：主题下拉选择，即时生效，不走「保存」按钮。
@@ -435,11 +441,21 @@ private fun ModelPickerDialog(
     )
 }
 
+// 单节面板：标题 + 内容；外观、关于等独立设置项继续使用。
 @Composable
 private fun SettingsPanel(
     title: String,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    SettingsCard {
+        SettingsSection(title)
+        content()
+    }
+}
+
+// 卡片外壳，允许多个分节合并在同一框内。
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     OutlinedCard(
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.outlinedCardColors(
@@ -452,15 +468,26 @@ private fun SettingsPanel(
             Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-            )
             content()
         }
     }
+}
+
+// 框内分节标题，样式与单节面板标题一致。
+@Composable
+private fun SettingsSection(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+// 框内分节分隔线。
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
 }
 
 @Composable
@@ -512,8 +539,11 @@ private fun <T> LabeledDropdown(
                 onClick = { expanded = true },
                 modifier = Modifier.fillMaxWidth(),
             ) {
+                // 值缺失时回退首项，避免找不到选项直接崩溃。
+                val selectedRes = options.firstOrNull { it.first == selected }?.second
+                    ?: options.first().second
                 Text(
-                    stringResource(options.first { it.first == selected }.second),
+                    stringResource(selectedRes),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),

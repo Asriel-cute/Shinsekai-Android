@@ -1,8 +1,11 @@
 package com.dreemurr.shinsekai.session
 
+import com.dreemurr.shinsekai.background.Background
 import com.dreemurr.shinsekai.character.Character
+import com.dreemurr.shinsekai.chat.DialogJsonParser
 import com.dreemurr.shinsekai.chat.InputItem
 import com.dreemurr.shinsekai.chat.Role
+import com.dreemurr.shinsekai.chat.presentationKind
 import com.dreemurr.shinsekai.template.TemplateGenerator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +44,7 @@ class SessionRepository(
         voiceLanguages: Map<String, String> = emptyMap(),
         cloudTtsEnabled: Boolean = true,
         playerCharacterId: String? = null,
+        background: Background? = null,
     ): ChatSession = mutex.withLock {
         withContext(io) {
             val now = System.currentTimeMillis()
@@ -50,7 +54,7 @@ class SessionRepository(
             val idSet = ids.toSet()
             val voiceSnapshot = voiceLanguages.filterKeys { it in idSet }
             val playerId = normalizePlayerId(playerCharacterId, characters)
-            val system = TemplateGenerator.generate(characters, voiceSnapshot, playerId)
+            val system = TemplateGenerator.generate(characters, voiceSnapshot, playerId, background)
             val session = ChatSession(
                 id = UUID.randomUUID().toString(),
                 title = if (names.size <= 2) {
@@ -62,6 +66,7 @@ class SessionRepository(
                 playerCharacterId = playerId,
                 voiceLanguages = voiceSnapshot,
                 cloudTtsEnabled = cloudTtsEnabled,
+                backgroundId = background?.id,
                 scenario = scenarioText,
                 history = listOf(
                     SessionEntry(
@@ -78,7 +83,7 @@ class SessionRepository(
         }
     }
 
-    // 会话设置页保存：按当前角色/场景重生成 system 快照，其余记录原样保留。
+    // 会话设置页保存：按当前角色/场景/背景重生成 system 快照，其余记录原样保留。
     suspend fun updateSetup(
         id: String,
         characters: List<Character>,
@@ -86,6 +91,7 @@ class SessionRepository(
         voiceLanguages: Map<String, String> = emptyMap(),
         cloudTtsEnabled: Boolean = true,
         playerCharacterId: String? = null,
+        background: Background? = null,
     ): ChatSession? = update(id) { session ->
         val ids = characters.map { it.id }
         val idSet = ids.toSet()
@@ -93,7 +99,7 @@ class SessionRepository(
         val playerId = normalizePlayerId(playerCharacterId, characters)
         val system = TemplateGenerator.composeForLlm(
             scenario.trim(),
-            TemplateGenerator.generate(characters, voiceSnapshot, playerId),
+            TemplateGenerator.generate(characters, voiceSnapshot, playerId, background),
         )
         val history = if (session.history.firstOrNull()?.role == Role.system) {
             session.history.mapIndexed { index, entry ->
@@ -107,6 +113,7 @@ class SessionRepository(
             playerCharacterId = playerId,
             voiceLanguages = voiceSnapshot,
             cloudTtsEnabled = cloudTtsEnabled,
+            backgroundId = background?.id,
             scenario = scenario.trim(),
             history = history,
         )
@@ -165,11 +172,28 @@ class SessionRepository(
         }
     }
 
-    // 保留 system 顺序，排除未完成条目。
+    // 保留 system 顺序，排除未完成条目；assistant 中的 SCENE/bgm 展示条目不回传给 LLM。
     fun buildInput(session: ChatSession): List<InputItem> =
         session.history.mapNotNull { entry ->
-            if (entry.complete) InputItem(role = entry.role, content = entry.content) else null
+            if (!entry.complete) return@mapNotNull null
+            val content =
+                if (entry.role == Role.assistant) stripPresentationDialogs(entry.content) else entry.content
+            if (content.isEmpty()) null else InputItem(role = entry.role, content = content)
         }
+
+    // 过滤后全部为展示条目时返回空串；无展示条目时保持原文，避免无谓重编码。
+    private fun stripPresentationDialogs(content: String): String {
+        if (!content.contains("SCENE") && !content.contains("bgm", ignoreCase = true) &&
+            !content.contains("场景")
+        ) {
+            return content
+        }
+        val dialogs = DialogJsonParser.parseAll(content)
+        val kept = dialogs.filterNot { presentationKind(it.name) != null }
+        if (kept.size == dialogs.size) return content
+        if (kept.isEmpty()) return ""
+        return DialogJsonParser.encode(kept)
+    }
 
     // 主控至少要有对手戏角色且在选角内；失效按未设置处理。
     private fun normalizePlayerId(playerCharacterId: String?, characters: List<Character>): String? =

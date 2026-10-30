@@ -1,12 +1,14 @@
 package com.dreemurr.shinsekai.di
 
 import android.content.Context
+import com.dreemurr.shinsekai.background.BackgroundRepository
 import com.dreemurr.shinsekai.character.CharacterRepository
 import com.dreemurr.shinsekai.chat.ChatRepository
 import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.session.SessionRepository
 import com.dreemurr.shinsekai.settings.SettingsRepository
 import com.dreemurr.shinsekai.voice.TtsRepository
+import com.dreemurr.shinsekai.voice.BgmPlayer
 import com.dreemurr.shinsekai.voice.VoiceBindings
 import com.dreemurr.shinsekai.voice.VoiceCardRepository
 import com.dreemurr.shinsekai.voice.VoicePlayer
@@ -28,10 +30,12 @@ class AppContainer(context: Context) {
 
     val settingsRepository = SettingsRepository(appContext, applicationScope)
     val characterRepository = CharacterRepository(File(appContext.filesDir, "characters"))
+    val backgroundRepository = BackgroundRepository(File(appContext.filesDir, "backgrounds"))
     val sessionRepository = SessionRepository(File(appContext.filesDir, "sessions"))
     val chatRepository = ChatRepository()
     val contextCompressor = ContextCompressor(chatRepository)
     val voicePlayer = VoicePlayer()
+    val bgmPlayer = BgmPlayer()
     val voiceCardRepository = VoiceCardRepository(File(appContext.filesDir, "voice_cards.json"))
     val voiceBindings = VoiceBindings(File(appContext.filesDir, "voice_bindings.json"))
     val ttsRepository = TtsRepository()

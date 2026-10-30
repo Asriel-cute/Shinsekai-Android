@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,6 +45,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -79,13 +81,16 @@ import com.dreemurr.shinsekai.R
 import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.chat.DialogJsonParser
 import com.dreemurr.shinsekai.chat.Role
+import com.dreemurr.shinsekai.chat.presentationKind
 import com.dreemurr.shinsekai.di.LocalAppContainer
 import com.dreemurr.shinsekai.session.SessionEntry
 import com.dreemurr.shinsekai.ui.chat.ChatViewModel.LineKind
 import com.dreemurr.shinsekai.ui.chat.ChatViewModel.Phase
 import com.dreemurr.shinsekai.ui.common.parseHexColor
 import kotlinx.coroutines.flow.StateFlow
+import java.io.File
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -105,6 +110,7 @@ fun ChatScreen(
     val toast by vm.toast.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showRecord by remember { mutableStateOf(false) }
+    var showChatSettings by remember { mutableStateOf(false) }
     var input by rememberSaveable { mutableStateOf("") }
     var rewindTarget by remember { mutableStateOf<Pair<Int, String>?>(null) }
 
@@ -129,76 +135,96 @@ fun ChatScreen(
         }
     }
 
-    Column(
+    // 背景图全屏铺底，顶栏/立绘/对话框/输入栏叠在其上；无背景时保持纯色。
+    Box(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        TopAppBar(
-            title = {
-                Text(
-                    state.title.ifBlank { stringResource(R.string.chat_title_fallback) },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.action_back),
-                    )
-                }
-            },
-            actions = {
-                IconButton(onClick = { showRecord = true }) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.List,
-                        contentDescription = stringResource(R.string.chat_record),
-                    )
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.85f),
-                titleContentColor = MaterialTheme.colorScheme.onBackground,
-                navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
-                actionIconContentColor = MaterialTheme.colorScheme.onBackground,
-            ),
-        )
+        state.backgroundImage?.let { BackgroundImage(it) }
 
-        Box(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentAlignment = Alignment.BottomCenter,
-        ) {
-            state.sprite?.let { SpriteImage(it) }
+        Column(Modifier.fillMaxSize()) {
+            TopAppBar(
+                title = {
+                    Text(
+                        state.title.ifBlank { stringResource(R.string.chat_title_fallback) },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_back),
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showChatSettings = true }) {
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = stringResource(R.string.chat_settings),
+                        )
+                    }
+                    IconButton(onClick = { showRecord = true }) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.List,
+                            contentDescription = stringResource(R.string.chat_record),
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.85f),
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground,
+                ),
+            )
+
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                state.sprite?.let { SpriteImage(it) }
+            }
+
+            DialogueBox(
+                state = state,
+                visibleSpeech = vm.visibleSpeech,
+                onRetry = vm::retry,
+                onBackToInput = vm::dismissError,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { vm.onBoxTap() },
+            )
+
+            ChatBottomBar(
+                phase = state.phase,
+                loading = state.loading,
+                streaming = state.streaming,
+                input = input,
+                inputHint = inputHint,
+                onInputChange = { input = it },
+                onSend = {
+                    vm.send(input)
+                    input = ""
+                },
+                onStop = vm::stop,
+            )
         }
+    }
 
-        DialogueBox(
-            state = state,
-            visibleSpeech = vm.visibleSpeech,
-            onRetry = vm::retry,
-            onBackToInput = vm::dismissError,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { vm.onBoxTap() },
-        )
-
-        ChatBottomBar(
-            phase = state.phase,
-            loading = state.loading,
-            streaming = state.streaming,
-            input = input,
-            inputHint = inputHint,
-            onInputChange = { input = it },
-            onSend = {
-                vm.send(input)
-                input = ""
-            },
-            onStop = vm::stop,
-        )
+    if (showChatSettings) {
+        ModalBottomSheet(onDismissRequest = { showChatSettings = false }) {
+            ChatSettingsSheetContent(
+                onPreviewVolume = vm::previewBgmVolume,
+                onVolumeSettled = vm::setBgmVolume,
+            )
+        }
     }
 
     if (showRecord) {
@@ -318,23 +344,94 @@ fun ChatScreen(
     }
 }
 
+// 文件图片请求统一构建：背景与立绘共用，crossfade 平滑切换。
 @Composable
-private fun SpriteImage(sprite: ChatViewModel.SpriteView) {
+private fun rememberImageRequest(file: File?): ImageRequest {
     val context = LocalContext.current
-    val request = remember(context, sprite.imageFile) {
+    return remember(context, file) {
         ImageRequest.Builder(context)
-            .data(sprite.imageFile)
+            .data(file)
             .crossfade(true)
             .build()
     }
+}
+
+// 场景背景图全屏铺底，裁切填充。
+@Composable
+private fun BackgroundImage(file: File) {
     AsyncImage(
-        model = request,
+        model = rememberImageRequest(file),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.fillMaxSize(),
+    )
+}
+
+@Composable
+private fun SpriteImage(sprite: ChatViewModel.SpriteView) {
+    AsyncImage(
+        model = rememberImageRequest(sprite.imageFile),
         contentDescription = null,
         contentScale = ContentScale.Fit,
         modifier = Modifier
             .fillMaxHeight(sprite.spriteScale.coerceIn(0.1f, 1f))
             .alpha(if (sprite.dimmed) 0.4f else 1f),
     )
+}
+
+// 聊天页设置：暂时只有全局 BGM 音量；拖动实时试听，松手才落盘。
+@Composable
+private fun ChatSettingsSheetContent(
+    onPreviewVolume: (Float) -> Unit,
+    onVolumeSettled: (Float) -> Unit,
+) {
+    // 音量流只在弹层内收集，落盘变化不触发整屏重组。
+    val container = LocalAppContainer.current
+    val bgmVolume by container.settingsRepository.bgmVolume.collectAsStateWithLifecycle()
+    // 拖动期间的本地值；松手后回到 DataStore 值。
+    var draggingVolume by remember { mutableStateOf<Float?>(null) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .navigationBarsPadding()
+            .padding(bottom = 24.dp),
+    ) {
+        Text(
+            stringResource(R.string.chat_settings),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Spacer(Modifier.height(20.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.chat_settings_bgm_volume),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                stringResource(
+                    R.string.chat_settings_volume_percent_format,
+                    ((draggingVolume ?: bgmVolume) * 100).roundToInt(),
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Slider(
+            value = draggingVolume ?: bgmVolume,
+            onValueChange = {
+                draggingVolume = it
+                onPreviewVolume(it)
+            },
+            onValueChangeFinished = {
+                draggingVolume?.let(onVolumeSettled)
+                draggingVolume = null
+            },
+        )
+    }
 }
 
 // 生成中显示停止条；停止后输入栏常驻，发送即丢弃未播放队列。
@@ -833,7 +930,10 @@ private fun RecordEntryItem(entry: SessionEntry, userLabel: String, onRewind: ()
         }
 
         entry.role == Role.assistant -> {
-            val dialogs = remember(entry) { DialogJsonParser.parseAll(entry.content) }
+            // SCENE/bgm 展示条目不属于台词，记录面板不展示。
+            val dialogs = remember(entry) {
+                DialogJsonParser.parseAll(entry.content).filterNot { presentationKind(it.name) != null }
+            }
             Column(Modifier.padding(vertical = 8.dp)) {
                 if (!entry.complete) {
                     Text(

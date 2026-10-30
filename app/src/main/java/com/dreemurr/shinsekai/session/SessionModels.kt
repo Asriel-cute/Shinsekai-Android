@@ -16,6 +16,8 @@ data class ChatSession(
     val voiceLanguages: Map<String, String> = emptyMap(),
     // 会话级云语音开关；关闭后绑定卡片不再合成，回退本地立绘语音。
     val cloudTtsEnabled: Boolean = true,
+    // 绑定的背景包 id；空=无背景。指向已删除的包时按无背景处理。
+    val backgroundId: String? = null,
     val scenario: String,
     val history: List<SessionEntry>, // 首条为 system 提示词快照，可在会话设置页重生成。
     val createdAt: Long,

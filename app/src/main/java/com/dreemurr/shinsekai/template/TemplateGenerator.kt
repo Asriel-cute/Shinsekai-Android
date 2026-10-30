@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.template
 
+import com.dreemurr.shinsekai.background.Background
 import com.dreemurr.shinsekai.character.Character
 import com.dreemurr.shinsekai.voice.VoiceLanguages
 
@@ -13,6 +14,7 @@ object TemplateGenerator {
         characters: List<Character>,
         voiceLanguages: Map<String, String> = emptyMap(),
         playerCharacterId: String? = null,
+        background: Background? = null,
     ): String {
         require(characters.isNotEmpty()) { "生成模板至少需要一个角色" }
 
@@ -20,6 +22,10 @@ object TemplateGenerator {
         val player = playerCharacterId
             ?.takeIf { characters.size >= 2 }
             ?.let { id -> characters.firstOrNull { it.id == id } }
+
+        // 无场景图且无 BGM 的空背景包按无背景处理。
+        val hasScenes = background != null && background.sprites.isNotEmpty()
+        val hasBgm = background != null && background.bgm.isNotEmpty()
 
         val names = characters.joinToString("，") { it.name }
         val (spriteChars, plainChars) = characters.partition { it.sprites.isNotEmpty() }
@@ -38,16 +44,18 @@ object TemplateGenerator {
 
         // 1536 为固定文案的容量预估，减少拼装时扩容。
         return buildString(
-            1536 + characters.sumOf { it.name.length + it.emotionTags.length + it.characterSetting.length },
+            1536 + characters.sumOf { it.name.length + it.emotionTags.length + it.characterSetting.length } +
+                (background?.let { it.bgTags.length + it.bgmTags.length } ?: 0),
         ) {
             append("出场人物有：").append(names).append("\n\n")
             appendJsonContract()
             appendSpriteGuide(spriteChars)
             appendCharacterSettings(settingChars)
+            appendBackgroundSection(background, hasScenes, hasBgm)
             appendPlayerSection(player)
-            appendRequirements(names, spriteChars, plainChars, translationTargets)
+            appendRequirements(names, spriteChars, plainChars, translationTargets, hasScenes, hasBgm)
             append('\n')
-            append("请开始对话，开始时介绍用户所处的情境和背景，以及正在做的事情：").append("\n\n")
+            appendOpening(hasScenes, hasBgm)
             append(JSON_REMINDER).append('\n')
         }
     }
@@ -62,6 +70,7 @@ object TemplateGenerator {
         }
     }
 
+    // sprite 统一描述为资源编号；无背景会话不会收到 SCENE/bgm 规则，即便误产出也会被安全忽略。
     private fun StringBuilder.appendJsonContract() {
         append(
             """
@@ -70,7 +79,7 @@ object TemplateGenerator {
             "dialog": [
                 {
                 "name": "角色名",
-                "sprite": "str, 立绘代号，无立绘或旁白固定为 -1",
+                "sprite": "str, 立绘代号或场景/BGM 编号，无立绘或旁白固定为 -1",
                 "speech": "前端展示的台词",
                 "translate": "语音合成用的朗读文本（无要求的角色省略）"
                 }
@@ -100,6 +109,27 @@ object TemplateGenerator {
         append('\n')
     }
 
+    // 背景包目录：场景图与 BGM 均为 1 基编号，标签逐行对应；空包不输出任何段落。
+    private fun StringBuilder.appendBackgroundSection(
+        background: Background?,
+        hasScenes: Boolean,
+        hasBgm: Boolean,
+    ) {
+        if (background == null || (!hasScenes && !hasBgm)) return
+        if (hasScenes) {
+            append("场景说明：\n")
+            append("现在有").append(background.sprites.size).append("个可用场景：\n")
+            appendTrimmed(background.bgTags).append('\n')
+            append('\n')
+        }
+        if (hasBgm) {
+            append("BGM说明：\n")
+            append("现在有").append(background.bgm.size).append("个可用BGM：\n")
+            appendTrimmed(background.bgmTags).append('\n')
+            append('\n')
+        }
+    }
+
     // 主控固定语义：AI 可补写日常台词，并按需复述用户实际台词。
     // 字段结构、立绘与翻译规则沿用通用提示词，此处只写主控专属语义。
     private fun StringBuilder.appendPlayerSection(player: Character?) {
@@ -119,18 +149,25 @@ object TemplateGenerator {
         spriteChars: List<Character>,
         plainChars: List<Character>,
         translationTargets: List<Pair<String, String>>,
+        hasScenes: Boolean,
+        hasBgm: Boolean,
     ) {
         append("要求：\n")
         rule("格式严格：输出内容必须严格且仅为 JSON 格式。")
-        rule("角色名限制：name 字段只能是以下之一：$names 以及其他可能出现的人物名，或者固定关键字：旁白。")
+        val reservedKeywords = buildList {
+            add("旁白")
+            if (hasScenes) add("SCENE")
+            if (hasBgm) add("bgm")
+        }.joinToString("、")
+        rule("角色名限制：name 字段只能是以下之一：$names 以及其他可能出现的人物名，或者固定关键字：$reservedKeywords。")
         appendSpriteRules(spriteChars, plainChars)
+        appendPresentationRules(hasScenes, hasBgm)
         rule("台词风格：speech 字段须为简体中文，内容尽量符合角色个性、说话方式与背景设定。")
         appendTranslationRules(translationTargets)
         // 仅提示模型按句意拆条，不在前端截断。
         rule("篇幅控制：每个元素的 speech 字段不超过 500 字左右；内容多时必须按句意拆成多个元素，即同一角色连续说话或中间情绪变化就拆成多个元素。")
         rule("数组结构：所有对话和事件必须按时间顺序放入 dialog 数组中，数组中至少包含两个元素。")
         rule("旁白用途：旁白元素用于描写场景变化、人物动作、心理活动和环境气氛。")
-        //rule("旁白节制：除开场介绍外，旁白只用于必要的场景变化、动作和心理活动；能由台词表达的内容尽量不要写旁白，也不要连续输出多条旁白。")
     }
 
     private fun StringBuilder.appendTranslationRules(targets: List<Pair<String, String>>) {
@@ -144,9 +181,28 @@ object TemplateGenerator {
 
     private fun StringBuilder.appendSpriteRules(spriteChars: List<Character>, plainChars: List<Character>) {
         if (spriteChars.isEmpty()) return rule("立绘规范：该角色没有可用立绘，sprite 字段必须固定为 -1。")
-        rule("立绘规范：sprite 字段必须填写一个两位数字代号（例如 01, 02），并根据当前台词语气和情绪自动选择最合适的立绘。")
+        rule("立绘规范：sprite 字段必须填写对应立绘的编号（从 1 开始，按立绘说明中的顺序），并根据当前台词语气和情绪自动选择最合适的立绘。")
         if (plainChars.isNotEmpty()) rule("无立绘角色：${plainChars.joinToString("，") { it.name }} 的 sprite 字段固定为 -1。")
         rule("非立绘角色：当 name 为旁白时，sprite 字段必须固定为 -1。")
+    }
+
+    // 立绘/场景/BGM 共用 sprite 字段的 1 基编号语义，规则文案保持同一说法。
+    private fun StringBuilder.appendPresentationRules(hasScenes: Boolean, hasBgm: Boolean) {
+        if (hasScenes) {
+            rule("场景切换：当 name 为 SCENE 时，sprite 字段填写场景编号（从 1 开始），如 3 表示切换到第 3 个场景；此时 speech 与 translate 留空。")
+        }
+        if (hasBgm) {
+            rule("BGM切换：当 name 为 bgm 时，sprite 字段填写 BGM 编号（从 1 开始），如 2 表示切换到第 2 首；应根据当前氛围切换；此时 speech 与 translate 留空。")
+        }
+    }
+
+    // 有背景时开场额外要求设置初始场景与 BGM。
+    private fun StringBuilder.appendOpening(hasScenes: Boolean, hasBgm: Boolean) {
+        append("请开始对话，开始时介绍用户所处的情境和背景")
+        if (hasScenes || hasBgm) {
+            append("，设置初始的场景和BGM")
+        }
+        append("，以及正在做的事情：").append("\n\n")
     }
 
     // 按索引修剪，避免复制整段设定。

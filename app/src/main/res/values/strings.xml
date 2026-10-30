@@ -53,6 +53,10 @@
     <string name="session_setup_missing_characters_format">有 %1$d 个角色已被删除，保存后将从会话中移除</string>
     <string name="session_setup_not_found_title">会话不存在</string>
     <string name="session_setup_not_found_body">该会话可能已被删除</string>
+    <string name="session_setup_background">背景包</string>
+    <string name="session_setup_background_none">无</string>
+    <string name="session_setup_background_hint">选择后 AI 将开场设置场景与 BGM，并随剧情切换；在角色页导入 .bg 背景包</string>
+    <string name="session_setup_background_missing">原背景包已被删除，保存后将清除背景</string>
     <string name="character_info_format">立绘 %1$d 张 · 语音 %2$d 条</string>
     <string name="character_no_sprites">无立绘</string>
     <string name="character_stats">立绘与语音</string>
@@ -90,13 +94,18 @@
     <string name="chat_tts_synthesizing">语音准备中…</string>
     <string name="chat_tts_save_failed">音频保存失败</string>
     <string name="chat_tts_unknown_error">未知错误</string>
+    <string name="chat_settings">聊天设置</string>
+    <string name="chat_settings_bgm_volume">背景音乐音量</string>
+    <string name="chat_settings_volume_percent_format">%1$d%%</string>
 
     <!-- 角色页 -->
     <string name="characters_title">角色</string>
+    <string name="characters_section_characters">角色</string>
+    <string name="characters_section_backgrounds">背景包</string>
     <string name="action_download">下载</string>
     <string name="action_import">导入</string>
     <string name="characters_empty_title">还没有角色</string>
-    <string name="characters_empty_body">点右上角「导入」，选择.char角色包</string>
+    <string name="characters_empty_body">点右上角「导入」，选择 .char 角色包或 .bg 背景包</string>
     <string name="import_success_format">导入成功，共 %1$d 个角色</string>
     <string name="import_conflict_title">发现同名角色</string>
     <string name="import_conflict_body">以下角色与已导入的角色同名，请选择处理方式：</string>
@@ -111,6 +120,19 @@
     <string name="err_session_not_found">导入会话已失效，请重新选择文件</string>
     <string name="err_io">读取文件失败</string>
     <string name="err_open_link">无法打开浏览器</string>
+
+    <!-- 背景包 -->
+    <string name="bg_import_success_format">导入成功，共 %1$d 个背景包</string>
+    <string name="bg_import_conflict_title">发现同名背景包</string>
+    <string name="bg_import_conflict_body">以下背景包与已导入的背景包同名，请选择处理方式：</string>
+    <string name="err_bg_not_a_zip">不是有效的背景包</string>
+    <string name="err_bg_missing_yaml">包内未找到background.yaml</string>
+    <string name="err_bg_malformed_yaml">background.yaml 解析失败</string>
+    <string name="err_bg_empty_package">包内没有可导入的背景</string>
+    <string name="err_bg_broken_archive">背景包已损坏或压缩格式不受支持</string>
+    <string name="bg_info_format">场景 %1$d 张 · BGM %2$d 首</string>
+    <string name="delete_background_title">删除背景包</string>
+    <string name="delete_background_body">删除后已绑定该背景包的会话将失去背景与音乐。确定删除吗？</string>
 
     <!-- 角色详情 -->
     <string name="character_panel_basic_info">基本信息</string>

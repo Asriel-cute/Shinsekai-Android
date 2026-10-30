@@ -17,6 +17,7 @@ class MainApplication : Application() {
         container.applicationScope.launch {
             coroutineScope {
                 launch { runCatching { container.characterRepository.load() }.onFailure { it.printStackTrace() } }
+                launch { runCatching { container.backgroundRepository.load() }.onFailure { it.printStackTrace() } }
                 launch { runCatching { container.sessionRepository.load() }.onFailure { it.printStackTrace() } }
                 launch { runCatching { container.voiceCardRepository.load() }.onFailure { it.printStackTrace() } }
                 launch { runCatching { container.voiceBindings.load() }.onFailure { it.printStackTrace() } }

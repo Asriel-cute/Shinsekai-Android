@@ -18,6 +18,7 @@ class SessionSetupViewModel(
 ) : ViewModel() {
 
     val characters = container.characterRepository.characters
+    val backgrounds = container.backgroundRepository.backgrounds
     val ready = container.ready
 
     private val _existing = MutableStateFlow<ChatSession?>(null)
@@ -38,6 +39,7 @@ class SessionSetupViewModel(
         scenario: String,
         cloudTtsEnabled: Boolean,
         playerCharacterId: String?,
+        backgroundId: String?,
         onSaved: (String) -> Unit,
     ) {
         viewModelScope.launch {
@@ -52,6 +54,10 @@ class SessionSetupViewModel(
                     characters.value.filter { it.id !in existingIdSet }
                 ).filter { it.id in selectedIds }
             if (ordered.isEmpty()) return@launch
+
+            // 已删除的背景包按无背景处理，保存后清除绑定。
+            val background = backgroundId
+                ?.let { id -> backgrounds.value.firstOrNull { it.id == id } }
 
             val cardsById = container.voiceCardRepository.cards.value.associateBy { it.id }
             val bindings = container.voiceBindings.bindings.value
@@ -69,6 +75,7 @@ class SessionSetupViewModel(
                     voiceLanguages = voiceLanguages,
                     cloudTtsEnabled = cloudTtsEnabled,
                     playerCharacterId = playerCharacterId,
+                    background = background,
                 ).id
             } else {
                 container.sessionRepository.updateSetup(
@@ -78,6 +85,7 @@ class SessionSetupViewModel(
                     voiceLanguages = voiceLanguages,
                     cloudTtsEnabled = cloudTtsEnabled,
                     playerCharacterId = playerCharacterId,
+                    background = background,
                 )?.id ?: return@launch
             }
             onSaved(id)
