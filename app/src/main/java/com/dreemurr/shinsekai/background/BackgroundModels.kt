@@ -3,14 +3,6 @@ package com.dreemurr.shinsekai.background
 import com.dreemurr.shinsekai.character.Conflict
 import com.dreemurr.shinsekai.character.ImportError
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-
-internal val backgroundJson = Json {
-    ignoreUnknownKeys = true
-    encodeDefaults = true
-    explicitNulls = false
-    prettyPrint = true
-}
 
 // 背景包元数据；sprites/bgm 顺序对应 LLM 的 1 基编号，缺素材保留 null，禁止删除或重排。
 // bgTags/bgmTags 为「场景 N：描述 / 音乐 N：描述」逐行原文，直接进入提示词。

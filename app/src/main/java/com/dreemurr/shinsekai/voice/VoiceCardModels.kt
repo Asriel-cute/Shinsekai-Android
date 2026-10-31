@@ -2,14 +2,6 @@ package com.dreemurr.shinsekai.voice
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.json.Json
-
-internal val voiceCardJson = Json {
-    ignoreUnknownKeys = true
-    encodeDefaults = true
-    explicitNulls = false
-    prettyPrint = true
-}
 
 internal val voiceCardListSerializer = ListSerializer(VoiceCard.serializer())
 

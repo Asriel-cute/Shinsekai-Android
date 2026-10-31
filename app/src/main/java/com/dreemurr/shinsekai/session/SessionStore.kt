@@ -1,17 +1,12 @@
 package com.dreemurr.shinsekai.session
 
-import kotlinx.serialization.json.Json
+import com.dreemurr.shinsekai.core.appJson
+import com.dreemurr.shinsekai.core.writeTextAtomic
 import java.io.File
+import java.io.IOException
 
-// 临时文件写完后改名，避免直接写入半截 JSON。
+// 临时文件写完后原子替换，避免直接写入半截 JSON。
 internal class SessionStore(private val rootDir: File) {
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-        explicitNulls = false
-        prettyPrint = true
-    }
 
     fun ensureLayout() {
         rootDir.mkdirs()
@@ -25,7 +20,7 @@ internal class SessionStore(private val rootDir: File) {
             .orEmpty()
             .mapNotNull { f ->
                 try {
-                    json.decodeFromString<ChatSession>(f.readText())
+                    appJson.decodeFromString<ChatSession>(f.readText())
                 } catch (e: Exception) {
                     e.printStackTrace()
                     null
@@ -34,15 +29,10 @@ internal class SessionStore(private val rootDir: File) {
             .sortedByDescending { it.updatedAt }
 
     fun write(session: ChatSession) {
-        val file = sessionFile(session.id)
-        val tmp = File(rootDir, "${session.id}.json.tmp")
-        tmp.writeText(json.encodeToString(session))
-        if (!tmp.renameTo(file)) {
-            file.delete()
-            if (!tmp.renameTo(file)) {
-                tmp.delete()
-                throw java.io.IOException("无法写入会话文件 ${session.id}")
-            }
+        try {
+            writeTextAtomic(sessionFile(session.id), appJson.encodeToString(session))
+        } catch (e: IOException) {
+            throw IOException("无法写入会话文件 ${session.id}", e)
         }
     }
 

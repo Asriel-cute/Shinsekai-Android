@@ -187,7 +187,8 @@ fun CharactersScreen(
                         items(backgrounds, key = { "bg_${it.id}" }) { background ->
                             BackgroundCard(
                                 background = background,
-                                coverFile = vm.backgroundCover(background.id),
+                                // 磁盘查询结果按背景 id 缓存，避免滚动重复 stat。
+                                coverFile = remember(background.id) { vm.backgroundCover(background.id) },
                                 onLongClick = { deleteBackgroundTarget = background },
                             )
                         }

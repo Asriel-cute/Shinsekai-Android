@@ -4,10 +4,14 @@ import com.charleskorn.kaml.Yaml
 import com.charleskorn.kaml.YamlException
 import com.charleskorn.kaml.YamlList
 import com.charleskorn.kaml.YamlMap
-import com.charleskorn.kaml.YamlNode
-import com.charleskorn.kaml.YamlNull
 import com.charleskorn.kaml.YamlScalar
-import com.charleskorn.kaml.YamlTaggedNode
+import com.dreemurr.shinsekai.core.YamlRoot
+import com.dreemurr.shinsekai.core.float
+import com.dreemurr.shinsekai.core.node
+import com.dreemurr.shinsekai.core.stripBom
+import com.dreemurr.shinsekai.core.str
+import com.dreemurr.shinsekai.core.unwrap
+import com.dreemurr.shinsekai.core.yamlRootItems
 
 // 旧包路径不可靠，素材引用只保留 basename。
 internal data class RawCharacter(
@@ -29,7 +33,7 @@ internal data class RawSprite(
     val voiceType: String?,
 )
 
-// 手动读取 YamlNode，兼容缺字段、null、引号数字和单 map 根。
+// 手动读取 YamlNode（helper 见 core/YamlNodes），兼容缺字段、null、引号数字和单 map 根。
 internal object CharacterYamlParser {
 
     fun parse(bytes: ByteArray): Pair<List<RawCharacter>, List<String>> {
@@ -40,20 +44,11 @@ internal object CharacterYamlParser {
             throw CharacterPackageException(ImportError.MalformedYaml, "character.yaml 解析失败", e)
         }
 
-        val items: List<YamlMap> = when (val node = root.unwrap()) {
-            is YamlList -> node.items.mapIndexedNotNull { index, item ->
-                when (val map = item.unwrap()) {
-                    is YamlMap -> map
-                    is YamlNull -> null
-                    else -> {
-                        warnings += "第 ${index + 1} 个角色条目不是键值结构，已跳过"
-                        null
-                    }
-                }
-            }
-            is YamlMap -> listOf(node)
-            is YamlNull -> throw CharacterPackageException(ImportError.EmptyPackage, "character.yaml 内容为空")
-            else -> throw CharacterPackageException(ImportError.MalformedYaml, "character.yaml 根节点不是列表")
+        val items = when (val parsed = yamlRootItems(root, "角色", warnings)) {
+            is YamlRoot.Items -> parsed.items
+            YamlRoot.Empty -> throw CharacterPackageException(ImportError.EmptyPackage, "character.yaml 内容为空")
+            YamlRoot.NotACollection ->
+                throw CharacterPackageException(ImportError.MalformedYaml, "character.yaml 根节点不是列表")
         }
 
         val characters = mutableListOf<RawCharacter>()
@@ -115,25 +110,6 @@ internal object CharacterYamlParser {
             else -> if (hasVoiceText) "reference" else "fallback"
         }
     }
-
-    private fun stripBom(bytes: ByteArray): ByteArray =
-        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
-            bytes.copyOfRange(3, bytes.size)
-        } else {
-            bytes
-        }
-
-    private fun YamlNode.unwrap(): YamlNode =
-        if (this is YamlTaggedNode) innerNode.unwrap() else this
-
-    // YamlMap.entries 是 Map，键按标量内容匹配。
-    private fun YamlMap.node(key: String): YamlNode? =
-        entries.entries.firstOrNull { it.key.content == key }?.value?.unwrap()
-
-    private fun YamlMap.str(key: String): String? = (node(key) as? YamlScalar)?.content
-
-    private fun YamlMap.float(key: String): Float? =
-        str(key)?.trim()?.toFloatOrNull()
 }
 
 // 统一分隔符后取 basename，排除无效文件名。

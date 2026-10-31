@@ -1,16 +1,17 @@
 package com.dreemurr.shinsekai.ui.voices
 
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dreemurr.shinsekai.R
+import com.dreemurr.shinsekai.core.queryDisplayName
 import com.dreemurr.shinsekai.di.AppContainer
 import com.dreemurr.shinsekai.voice.CloneVoiceResult
 import com.dreemurr.shinsekai.voice.TtsProvider
 import com.dreemurr.shinsekai.voice.TtsRepository
 import com.dreemurr.shinsekai.voice.VoiceCard
 import com.dreemurr.shinsekai.voice.VoiceLanguages
+import com.dreemurr.shinsekai.voice.VoicePackage
 import com.dreemurr.shinsekai.voice.VoicePackageReader
 import com.dreemurr.shinsekai.voice.VoicePackageResult
 import kotlinx.coroutines.Dispatchers
@@ -99,34 +100,34 @@ class VoiceCloneViewModel(private val container: AppContainer) : ViewModel() {
             when (result) {
                 null -> _toast.value = "无法读取所选文件"
                 is VoicePackageResult.Failure -> _toast.value = "导入失败：${result.message}"
-
-                is VoicePackageResult.Success -> {
-                    val pkg = result.pkg
-                    val current = _form.value
-                    val importedLang = VoiceLanguages.normalize(pkg.lang)
-                    // 包内没有 lang 时保留用户已选语言；不支持的语言回退自动。
-                    val nextLang = when {
-                        pkg.lang.isNullOrBlank() -> current.lang
-                        importedLang != null -> importedLang
-                        else -> VoiceLanguages.AUTO
-                    }
-                    _form.value = current.copy(
-                        name = pkg.name,
-                        promptText = pkg.promptText ?: current.promptText,
-                        lang = nextLang,
-                        cloneAudio = pkg.cloneAudio ?: current.cloneAudio,
-                        promptAudio = pkg.promptAudio ?: current.promptAudio,
-                    )
-                    _toast.value = when {
-                        pkg.cloneAudio == null -> "导入完成，但包内未找到克隆音频"
-                        !pkg.lang.isNullOrBlank() && importedLang == null -> appContext.getString(
-                            R.string.voice_lang_unsupported_format,
-                            pkg.lang,
-                        )
-                        else -> "导入完成，已填写相关字段"
-                    }
-                }
+                is VoicePackageResult.Success -> applyImported(result.pkg)
             }
+        }
+    }
+
+    // 填写非空字段并按导入情况提示；包内没有 lang 时保留用户已选语言，不支持的语言回退自动。
+    private fun applyImported(pkg: VoicePackage) {
+        val current = _form.value
+        val importedLang = VoiceLanguages.normalize(pkg.lang)
+        val nextLang = when {
+            pkg.lang.isNullOrBlank() -> current.lang
+            importedLang != null -> importedLang
+            else -> VoiceLanguages.AUTO
+        }
+        _form.value = current.copy(
+            name = pkg.name,
+            promptText = pkg.promptText ?: current.promptText,
+            lang = nextLang,
+            cloneAudio = pkg.cloneAudio ?: current.cloneAudio,
+            promptAudio = pkg.promptAudio ?: current.promptAudio,
+        )
+        _toast.value = when {
+            pkg.cloneAudio == null -> "导入完成，但包内未找到克隆音频"
+            !pkg.lang.isNullOrBlank() && importedLang == null -> appContext.getString(
+                R.string.voice_lang_unsupported_format,
+                pkg.lang,
+            )
+            else -> "导入完成，已填写相关字段"
         }
     }
 
@@ -141,7 +142,8 @@ class VoiceCloneViewModel(private val container: AppContainer) : ViewModel() {
     private fun pickAudio(uri: Uri, setter: (File) -> Unit) {
         viewModelScope.launch {
             val file = withContext(Dispatchers.IO) {
-                copyToWork(uri, "pick-${UUID.randomUUID()}-${displayName(uri) ?: "audio"}")
+                val name = queryDisplayName(appContext.contentResolver, uri) ?: "audio"
+                copyToWork(uri, "pick-${UUID.randomUUID()}-$name")
             }
             if (file == null) {
                 _toast.value = "无法读取所选音频"
@@ -165,12 +167,6 @@ class VoiceCloneViewModel(private val container: AppContainer) : ViewModel() {
             null
         }
     }
-
-    private fun displayName(uri: Uri): String? = runCatching {
-        appContext.contentResolver
-            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-    }.getOrNull()
 
     fun submit() {
         val current = _form.value

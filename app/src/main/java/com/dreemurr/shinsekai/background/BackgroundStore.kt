@@ -1,10 +1,13 @@
 package com.dreemurr.shinsekai.background
 
 import com.dreemurr.shinsekai.character.ImportError
+import com.dreemurr.shinsekai.core.appJson
+import com.dreemurr.shinsekai.core.cleanFileName
+import com.dreemurr.shinsekai.core.uniqueAssetName
+import com.dreemurr.shinsekai.core.writeTextAtomic
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 // 素材索引只在本轮导入中复用，不跨导入缓存。
 internal class BackgroundAssetIndex(
@@ -40,7 +43,7 @@ internal class BackgroundStore(private val rootDir: File) {
             ?: return emptyList()
         return dirs.mapNotNull { dir ->
             runCatching {
-                backgroundJson.decodeFromString(Background.serializer(), File(dir, BACKGROUND_JSON).readText())
+                appJson.decodeFromString(Background.serializer(), File(dir, BACKGROUND_JSON).readText())
             }.getOrNull()
         }.sortedBy { it.importedAt }
     }
@@ -81,14 +84,11 @@ internal class BackgroundStore(private val rootDir: File) {
 
     // 临时文件写完后再替换。
     fun writeBackgroundJson(dir: File, background: Background) {
-        val target = File(dir, BACKGROUND_JSON)
-        val tmp = File(dir, "$BACKGROUND_JSON.tmp")
         try {
-            dir.mkdirs()
-            tmp.writeText(backgroundJson.encodeToString(Background.serializer(), background))
-            if (!tmp.renameTo(target)) {
-                Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
+            writeTextAtomic(
+                File(dir, BACKGROUND_JSON),
+                appJson.encodeToString(Background.serializer(), background),
+            )
         } catch (e: IOException) {
             throw BackgroundPackageException(ImportError.Io, "写入 $BACKGROUND_JSON 失败: ${background.name}", e)
         }
@@ -173,7 +173,7 @@ internal class BackgroundStore(private val rootDir: File) {
         }
 
         fun copy(source: File): String? {
-            val name = uniqueName(cleanFileName(source.name))
+            val name = uniqueAssetName(cleanFileName(source.name), usedNames)
             return try {
                 source.copyTo(File(destDir, name), overwrite = false)
                 usedNames += name
@@ -181,20 +181,6 @@ internal class BackgroundStore(private val rootDir: File) {
             } catch (_: IOException) {
                 null
             }
-        }
-
-        private fun uniqueName(name: String): String {
-            if (name !in usedNames) return name
-            val dot = name.lastIndexOf('.')
-            val stem = if (dot > 0) name.substring(0, dot) else name
-            val ext = if (dot > 0) name.substring(dot) else ""
-            var index = 1
-            var candidate = "$stem-$index$ext"
-            while (candidate in usedNames) {
-                index++
-                candidate = "$stem-$index$ext"
-            }
-            return candidate
         }
     }
 
@@ -217,16 +203,4 @@ internal class BackgroundStore(private val rootDir: File) {
         const val STAGING_DIR = ".staging"
         const val BACKGROUND_JSON = "background.json"
     }
-}
-
-// 文件名清洗规则（正则预编译）。
-private val ILLEGAL_FILE_NAME_CHARS = Regex("[\\x00-\\x1f<>:\"/\\\\|?*]")
-
-private fun cleanFileName(raw: String): String {
-    val name = ILLEGAL_FILE_NAME_CHARS.replace(raw, "_").trim(' ', '.')
-    if (name.isEmpty()) return "asset"
-    if (name.length <= 120) return name
-    val dot = name.lastIndexOf('.')
-    val ext = if (dot > 0) name.substring(dot) else ""
-    return name.substring(0, 120 - ext.length) + ext
 }

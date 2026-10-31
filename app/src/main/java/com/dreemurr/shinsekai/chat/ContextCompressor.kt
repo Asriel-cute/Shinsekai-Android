@@ -40,6 +40,8 @@ class ContextCompressor(private val chatRepository: ChatRepository) {
     private fun buildTranscript(entries: List<SessionEntry>): List<String> {
         val lines = ArrayList<String>(entries.size)
         for (entry in entries) {
+            // 未完成残片不进摘要，与 buildInput 的过滤口径一致。
+            if (!entry.complete) continue
             when {
                 entry.summary -> lines.add(entry.content)
                 entry.role == Role.user -> lines.add("用户：" + entry.content)

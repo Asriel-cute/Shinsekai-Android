@@ -1,8 +1,6 @@
 package com.dreemurr.shinsekai.ui.characters
 
-import android.content.ContentResolver
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dreemurr.shinsekai.R
@@ -11,6 +9,7 @@ import com.dreemurr.shinsekai.character.Conflict
 import com.dreemurr.shinsekai.character.ConflictDecision
 import com.dreemurr.shinsekai.character.ImportError
 import com.dreemurr.shinsekai.character.ImportOutcome
+import com.dreemurr.shinsekai.core.queryDisplayName
 import com.dreemurr.shinsekai.di.AppContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,7 +60,6 @@ class CharactersViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
     }
-
     fun resolve(token: String, decision: ConflictDecision) =
         launchImport {
             if (token in backgroundTokens) {
@@ -169,19 +167,5 @@ class CharactersViewModel(private val container: AppContainer) : ViewModel() {
                 false
             }
         }
-
-        private suspend fun queryDisplayName(resolver: ContentResolver, uri: Uri): String? =
-            withContext(Dispatchers.IO) {
-                try {
-                    resolver.query(
-                        uri,
-                        arrayOf(OpenableColumns.DISPLAY_NAME),
-                        null, null, null,
-                    )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    null
-                }
-            }
     }
 }

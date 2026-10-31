@@ -1,14 +1,6 @@
 package com.dreemurr.shinsekai.character
 
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-
-internal val characterJson = Json {
-    ignoreUnknownKeys = true
-    encodeDefaults = true
-    explicitNulls = false
-    prettyPrint = true
-}
 
 // 角色元数据，不保留语音合成模型配置。
 @Serializable

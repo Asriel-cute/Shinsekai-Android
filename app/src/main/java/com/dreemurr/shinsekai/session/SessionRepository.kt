@@ -160,12 +160,12 @@ class SessionRepository(
     suspend fun appendEntry(id: String, entry: SessionEntry): ChatSession? =
         update(id) { it.copy(history = it.history + entry) }
 
-    // 结尾已有未完成回复时，新的残片替换它，避免同轮残片堆积。
+    // 结尾已有未完成回复时一律替换：重试成功的新回复也顶掉旧残片，避免残片悬挂在完整回复前。
     suspend fun appendAssistantResult(id: String, rawText: String, complete: Boolean) {
         if (rawText.isBlank()) return
         update(id) { session ->
             val last = session.history.lastOrNull()
-            val replaceTail = !complete && last != null && last.role == Role.assistant && !last.complete
+            val replaceTail = last != null && last.role == Role.assistant && !last.complete
             val history = (if (replaceTail) session.history.dropLast(1) else session.history) +
                 SessionEntry(role = Role.assistant, content = rawText, complete = complete)
             session.copy(history = history)

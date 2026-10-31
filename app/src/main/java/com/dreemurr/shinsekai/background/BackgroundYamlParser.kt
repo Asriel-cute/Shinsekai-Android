@@ -4,12 +4,15 @@ import com.charleskorn.kaml.Yaml
 import com.charleskorn.kaml.YamlException
 import com.charleskorn.kaml.YamlList
 import com.charleskorn.kaml.YamlMap
-import com.charleskorn.kaml.YamlNode
-import com.charleskorn.kaml.YamlNull
 import com.charleskorn.kaml.YamlScalar
-import com.charleskorn.kaml.YamlTaggedNode
 import com.dreemurr.shinsekai.character.ImportError
 import com.dreemurr.shinsekai.character.packagePathBasename
+import com.dreemurr.shinsekai.core.YamlRoot
+import com.dreemurr.shinsekai.core.node
+import com.dreemurr.shinsekai.core.stripBom
+import com.dreemurr.shinsekai.core.str
+import com.dreemurr.shinsekai.core.unwrap
+import com.dreemurr.shinsekai.core.yamlRootItems
 
 // 旧包路径不可靠（如 data/backgrounds\prefix\file.png），素材引用只保留 basename。
 internal data class RawBackground(
@@ -21,7 +24,7 @@ internal data class RawBackground(
     val bgmTags: String,
 )
 
-// 手动读取 YamlNode，兼容缺字段、null、引号数字和单 map 根；一个包可含多个背景组。
+// 手动读取 YamlNode（helper 见 core/YamlNodes），兼容缺字段、null、引号数字和单 map 根；一个包可含多个背景组。
 internal object BackgroundYamlParser {
 
     fun parse(bytes: ByteArray): Pair<List<RawBackground>, List<String>> {
@@ -32,20 +35,11 @@ internal object BackgroundYamlParser {
             throw BackgroundPackageException(ImportError.MalformedYaml, "background.yaml 解析失败", e)
         }
 
-        val items: List<YamlMap> = when (val node = root.unwrap()) {
-            is YamlList -> node.items.mapIndexedNotNull { index, item ->
-                when (val map = item.unwrap()) {
-                    is YamlMap -> map
-                    is YamlNull -> null
-                    else -> {
-                        warnings += "第 ${index + 1} 个背景条目不是键值结构，已跳过"
-                        null
-                    }
-                }
-            }
-            is YamlMap -> listOf(node)
-            is YamlNull -> throw BackgroundPackageException(ImportError.EmptyPackage, "background.yaml 内容为空")
-            else -> throw BackgroundPackageException(ImportError.MalformedYaml, "background.yaml 根节点不是列表")
+        val items = when (val parsed = yamlRootItems(root, "背景", warnings)) {
+            is YamlRoot.Items -> parsed.items
+            YamlRoot.Empty -> throw BackgroundPackageException(ImportError.EmptyPackage, "background.yaml 内容为空")
+            YamlRoot.NotACollection ->
+                throw BackgroundPackageException(ImportError.MalformedYaml, "background.yaml 根节点不是列表")
         }
 
         val backgrounds = mutableListOf<RawBackground>()
@@ -81,20 +75,4 @@ internal object BackgroundYamlParser {
             }
         }
     }
-
-    private fun stripBom(bytes: ByteArray): ByteArray =
-        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
-            bytes.copyOfRange(3, bytes.size)
-        } else {
-            bytes
-        }
-
-    private fun YamlNode.unwrap(): YamlNode =
-        if (this is YamlTaggedNode) innerNode.unwrap() else this
-
-    // YamlMap.entries 是 Map，键按标量内容匹配。
-    private fun YamlMap.node(key: String): YamlNode? =
-        entries.entries.firstOrNull { it.key.content == key }?.value?.unwrap()
-
-    private fun YamlMap.str(key: String): String? = (node(key) as? YamlScalar)?.content
 }

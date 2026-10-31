@@ -23,22 +23,8 @@ class VoicesViewModel(private val container: AppContainer) : ViewModel() {
         if (_deleting.value) return null
         _deleting.value = true
         try {
-            if (purge) {
-                val provider = card.providerEnum
-                if (provider != null) {
-                    when (
-                        val result = container.ttsRepository.deleteVoice(
-                            provider = provider,
-                            baseUrl = card.baseUrl.trim(),
-                            apiKey = container.voiceCardRepository.decryptKey(card),
-                            voiceId = card.voiceId,
-                        )
-                    ) {
-                        is DeleteVoiceResult.Failure -> return result.message
-                        DeleteVoiceResult.Success -> Unit
-                    }
-                }
-            }
+            // 云端删除失败即中止，保留本地卡片。
+            if (purge) purgeRemote(card)?.let { return it }
             container.voiceCardRepository.delete(card.id)
             // 卡片已删，清理指向它的绑定关系。
             container.voiceBindings.clearCard(card.id)
@@ -48,6 +34,22 @@ class VoicesViewModel(private val container: AppContainer) : ViewModel() {
             return e.message ?: "删除失败"
         } finally {
             _deleting.value = false
+        }
+    }
+
+    // 彻底删除时先删云端克隆音色；未知服务商按已删处理。
+    private suspend fun purgeRemote(card: VoiceCard): String? {
+        val provider = card.providerEnum ?: return null
+        return when (
+            val result = container.ttsRepository.deleteVoice(
+                provider = provider,
+                baseUrl = card.baseUrl.trim(),
+                apiKey = container.voiceCardRepository.decryptKey(card),
+                voiceId = card.voiceId,
+            )
+        ) {
+            is DeleteVoiceResult.Failure -> result.message
+            DeleteVoiceResult.Success -> null
         }
     }
 }

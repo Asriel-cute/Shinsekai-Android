@@ -1,5 +1,7 @@
 package com.dreemurr.shinsekai.voice
 
+import com.dreemurr.shinsekai.core.appJson
+import com.dreemurr.shinsekai.core.writeTextAtomic
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,8 +13,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 // 角色与声音卡片的绑定关系：filesDir/voice_bindings.json 单文件 Map，临时文件原子替换。
 // 角色管道只管导入，绑定关系由本仓库独立维护；同名覆盖重导会保留角色 id，绑定不丢。
@@ -30,7 +30,7 @@ class VoiceBindings(
     suspend fun load() = mutex.withLock {
         withContext(io) {
             _bindings.value = runCatching {
-                voiceCardJson.decodeFromString(serializer, file.readText())
+                appJson.decodeFromString(serializer, file.readText())
             }.getOrDefault(emptyMap())
         }
     }
@@ -52,17 +52,6 @@ class VoiceBindings(
 
     // 先写临时文件再原子替换。
     private fun persist(map: Map<String, String>) {
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        try {
-            file.parentFile?.mkdirs()
-            tmp.writeText(voiceCardJson.encodeToString(serializer, map))
-            if (!tmp.renameTo(file)) {
-                Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            tmp.delete()
-            throw e
-        }
+        writeTextAtomic(file, appJson.encodeToString(serializer, map))
     }
 }

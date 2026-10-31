@@ -233,8 +233,10 @@ fun ChatScreen(
                 history = state.history,
                 tokenEstimate = state.tokenEstimate,
                 userLabel = userLabel,
-                compressEnabled = !state.streaming && !state.compressing &&
-                    state.history.count { it.role != Role.system } > ContextCompressor.RECENT_ENTRIES,
+                compressEnabled = remember(state.streaming, state.compressing, state.history) {
+                    !state.streaming && !state.compressing &&
+                        state.history.count { it.role != Role.system } > ContextCompressor.RECENT_ENTRIES
+                },
                 onCompress = {
                     showRecord = false
                     vm.requestCompress()
@@ -269,9 +271,10 @@ fun ChatScreen(
 
     // 手动压缩确认：明确说明摘要点之前的记录会被删除。
     if (state.showCompressConfirm) {
-        val foldableCount = (
-            state.history.count { it.role != Role.system } - ContextCompressor.RECENT_ENTRIES
-            ).coerceAtLeast(0)
+        val foldableCount = remember(state.history) {
+            (state.history.count { it.role != Role.system } - ContextCompressor.RECENT_ENTRIES)
+                .coerceAtLeast(0)
+        }
         AlertDialog(
             onDismissRequest = vm::dismissCompressConfirm,
             title = { Text(stringResource(R.string.compress_confirm_title)) },

@@ -59,6 +59,14 @@ private sealed interface UploadResult {
     data class Err(val message: String) : UploadResult
 }
 
+// 阿里克隆部署状态的单次查询结果。
+private sealed interface AliyunPoll {
+    data object Deployed : AliyunPoll
+    data object Undeployed : AliyunPoll
+    data object Pending : AliyunPoll
+    data class Failed(val message: String) : AliyunPoll
+}
+
 // 云 TTS 请求执行：服务商差异由 TtsRequests/TtsResponses 封装，这里只管连接与错误。
 class TtsRepository {
     // 上传与克隆音频可能较大，统一放宽超时；callTimeout 覆盖单次调用全程。
@@ -136,35 +144,46 @@ class TtsRepository {
         voiceId: String,
     ): DeleteVoiceResult = withContext(Dispatchers.IO) {
         try {
-            val (path, body) = when (provider) {
-                TtsProvider.ALIYUN ->
-                    ALIYUN_CUSTOMIZATION to TtsRequests.aliyunDeleteVoice(voiceId)
-                TtsProvider.MINIMAX ->
-                    "delete_voice" to TtsRequests.minimaxDeleteVoice(voiceId)
-            }
-            when (val http = executePost(baseUrl, path, apiKey, body)) {
-                is HttpText.Err -> DeleteVoiceResult.Failure(http.message)
-                is HttpText.Ok -> when (provider) {
-                    // 阿里 HTTP 200 即成功；MiniMax 以 base_resp 判定。
-                    TtsProvider.ALIYUN -> DeleteVoiceResult.Success
-                    TtsProvider.MINIMAX -> {
-                        val code = TtsResponses.minimaxStatusCode(http.text)
-                        if (code != null && code != 0) {
-                            DeleteVoiceResult.Failure(
-                                TtsResponses.minimaxStatusMessage(http.text)
-                                    ?: "删除失败（错误码 $code）",
-                            )
-                        } else {
-                            DeleteVoiceResult.Success
-                        }
-                    }
-                }
+            when (provider) {
+                TtsProvider.ALIYUN -> deleteAliyun(baseUrl, apiKey, voiceId)
+                TtsProvider.MINIMAX -> deleteMinimax(baseUrl, apiKey, voiceId)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             e.printStackTrace()
             DeleteVoiceResult.Failure(friendlyError(e))
+        }
+    }
+
+    // 阿里 HTTP 200 即成功。
+    private fun deleteAliyun(baseUrl: String, apiKey: String, voiceId: String): DeleteVoiceResult {
+        val http = executePost(
+            baseUrl,
+            ALIYUN_CUSTOMIZATION,
+            apiKey,
+            TtsRequests.aliyunDeleteVoice(voiceId),
+        )
+        return when (http) {
+            is HttpText.Err -> DeleteVoiceResult.Failure(http.message)
+            is HttpText.Ok -> DeleteVoiceResult.Success
+        }
+    }
+
+    // MiniMax 以 base_resp 判定。
+    private fun deleteMinimax(baseUrl: String, apiKey: String, voiceId: String): DeleteVoiceResult {
+        val http = executePost(baseUrl, "delete_voice", apiKey, TtsRequests.minimaxDeleteVoice(voiceId))
+        val text = when (http) {
+            is HttpText.Err -> return DeleteVoiceResult.Failure(http.message)
+            is HttpText.Ok -> http.text
+        }
+        val code = TtsResponses.minimaxStatusCode(text)
+        return if (code != null && code != 0) {
+            DeleteVoiceResult.Failure(
+                TtsResponses.minimaxStatusMessage(text) ?: "删除失败（错误码 $code）",
+            )
+        } else {
+            DeleteVoiceResult.Success
         }
     }
 
@@ -280,48 +299,46 @@ class TtsRepository {
                 TtsResponses.errorMessage(createdText) ?: "创建音色失败，未返回 Voice ID",
             )
 
-        // 创建后需审核部署，轮询至出结果；UNDEPLOYED 即审核未通过。
-        // 单次查询失败（网络抖动/限流）跳过继续下一轮，连续 3 次才判克隆失败；
-        // HTTP 成功但响应缺 status 视为部署中，不计入失败。
+        // 创建后需审核部署，轮询至出结果；单次查询失败（网络抖动/限流）连续 3 次才判克隆失败。
         var consecutiveFailures = 0
-        var lastQueryError: String? = null
         repeat(ALIYUN_POLL_TIMES) {
             delay(ALIYUN_POLL_INTERVAL)
-            var confirmed = false
-            var status: String? = null
-            try {
-                when (
-                    val http = executePost(
-                        baseUrl = params.baseUrl,
-                        path = ALIYUN_CUSTOMIZATION,
-                        apiKey = params.apiKey,
-                        body = TtsRequests.aliyunQueryVoice(voiceId),
-                    )
-                ) {
-                    is HttpText.Err -> lastQueryError = http.message
-                    is HttpText.Ok -> {
-                        confirmed = true
-                        status = TtsResponses.aliyunStatus(http.text)
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                lastQueryError = friendlyError(e)
-            }
-            if (!confirmed) {
-                if (++consecutiveFailures >= ALIYUN_POLL_FAILURES) {
-                    return CloneVoiceResult.Failure(lastQueryError ?: "查询部署状态失败")
-                }
-            } else {
-                consecutiveFailures = 0
-                when (status) {
-                    "OK" -> return CloneVoiceResult.Success(voiceId)
-                    "UNDEPLOYED" -> return CloneVoiceResult.Failure("音色审核未通过")
+            when (val poll = pollAliyunOnce(params, voiceId)) {
+                AliyunPoll.Deployed -> return CloneVoiceResult.Success(voiceId)
+                AliyunPoll.Undeployed -> return CloneVoiceResult.Failure("音色审核未通过")
+                AliyunPoll.Pending -> consecutiveFailures = 0
+                is AliyunPoll.Failed -> if (++consecutiveFailures >= ALIYUN_POLL_FAILURES) {
+                    return CloneVoiceResult.Failure(poll.message)
                 }
             }
         }
         return CloneVoiceResult.Failure("音色部署超时，请稍后通过「获取音色」确认状态")
     }
+
+    // 单次部署状态查询：HTTP 成功但缺 status 视为部署中，不计入失败。
+    private suspend fun pollAliyunOnce(params: CloneParams, voiceId: String): AliyunPoll =
+        try {
+            when (
+                val http = executePost(
+                    baseUrl = params.baseUrl,
+                    path = ALIYUN_CUSTOMIZATION,
+                    apiKey = params.apiKey,
+                    body = TtsRequests.aliyunQueryVoice(voiceId),
+                )
+            ) {
+                is HttpText.Err -> AliyunPoll.Failed(http.message)
+                is HttpText.Ok -> when (TtsResponses.aliyunStatus(http.text)) {
+                    "OK" -> AliyunPoll.Deployed
+                    "UNDEPLOYED" -> AliyunPoll.Undeployed
+                    else -> AliyunPoll.Pending
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            e.printStackTrace()
+            AliyunPoll.Failed(friendlyError(e))
+        }
 
     private fun cloneMinimax(params: CloneParams): CloneVoiceResult {
         // 第一步：上传克隆音频；参考音频（可选）走 prompt_audio 用途。

@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.voice
 
+import com.dreemurr.shinsekai.core.cleanFileName
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -140,10 +141,9 @@ object VoicePackageReader {
         }.getOrNull()
     }
 
-    // 保留原文件名，清理非法字符；冲突时加序号。
+    // 保留原文件名，清理非法字符；冲突时加序号（磁盘判重）。
     private fun uniqueTarget(outDir: File, entryPath: String): File {
-        val base = entryPath.substringAfterLast('/').ifBlank { "audio" }
-        val safe = ILLEGAL_NAME_CHARS.replace(base, "_").trim(' ', '.').ifBlank { "audio" }
+        val safe = cleanFileName(entryPath.substringAfterLast('/'), fallback = "audio")
         var candidate = File(outDir, safe)
         var index = 1
         while (candidate.exists()) {
@@ -167,6 +167,4 @@ object VoicePackageReader {
     private const val MANIFEST = "manifest.json"
 
     private val lenientJson = Json { ignoreUnknownKeys = true }
-
-    private val ILLEGAL_NAME_CHARS = Regex("[\\x00-\\x1f<>:\"/\\\\|?*]")
 }

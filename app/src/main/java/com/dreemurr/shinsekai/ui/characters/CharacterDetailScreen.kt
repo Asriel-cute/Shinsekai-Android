@@ -250,7 +250,10 @@ fun CharacterDetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(vertical = 4.dp),
                     ) {
-                        items(details.sprites.size) { index -> SpriteThumbnail(vm.spriteFile(index)) }
+                        // 磁盘查询结果按角色内容与下标缓存，避免滚动重复 stat。
+                        items(details.sprites.size) { index ->
+                            SpriteThumbnail(remember(details, index) { vm.spriteFile(index) })
+                        }
                     }
                 }
             }

@@ -114,7 +114,8 @@ class BackgroundRepository(
             }
             val session = ImportSession(token, stagingDir, rawDir, raws, warnings, sourceFileName)
             if (conflicts.isEmpty()) {
-                commitSession(session, decision = null)
+                // 同锁内无并发写入，冲突检查用的索引直接复用，避免重复构建。
+                commitSession(session, decision = null, prebuilt = existing)
             } else {
                 sessions[token] = session
                 BackgroundImportOutcome.NeedsDecision(token, conflicts)
@@ -132,8 +133,12 @@ class BackgroundRepository(
         return BackgroundImportOutcome.Failed(error)
     }
 
-    private fun commitSession(session: ImportSession, decision: ConflictDecision?): BackgroundImportOutcome = try {
-        val existing = backgroundsByName()
+    private fun commitSession(
+        session: ImportSession,
+        decision: ConflictDecision?,
+        prebuilt: Map<String, Background>? = null,
+    ): BackgroundImportOutcome = try {
+        val existing = prebuilt ?: backgroundsByName()
         val usedNames = existing.keys.toMutableSet()
         val assets = store.indexAssets(session.rawDir)
         val warnings = session.warnings.toMutableList()

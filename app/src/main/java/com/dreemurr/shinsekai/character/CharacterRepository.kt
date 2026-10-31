@@ -113,7 +113,8 @@ class CharacterRepository(
             }
             val session = ImportSession(token, stagingDir, rawDir, raws, warnings, sourceFileName)
             if (conflicts.isEmpty()) {
-                commitSession(session, decision = null)
+                // 同锁内无并发写入，冲突检查用的索引直接复用，避免重复构建。
+                commitSession(session, decision = null, prebuilt = existing)
             } else {
                 sessions[token] = session
                 ImportOutcome.NeedsDecision(token, conflicts)
@@ -131,8 +132,12 @@ class CharacterRepository(
         return ImportOutcome.Failed(error)
     }
 
-    private fun commitSession(session: ImportSession, decision: ConflictDecision?): ImportOutcome = try {
-        val existing = charactersByName()
+    private fun commitSession(
+        session: ImportSession,
+        decision: ConflictDecision?,
+        prebuilt: Map<String, Character>? = null,
+    ): ImportOutcome = try {
+        val existing = prebuilt ?: charactersByName()
         val usedNames = existing.keys.toMutableSet()
         val assets = store.indexAssets(session.rawDir)
         val warnings = session.warnings.toMutableList()

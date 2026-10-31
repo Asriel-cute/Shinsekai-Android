@@ -1,5 +1,7 @@
 package com.dreemurr.shinsekai.voice
 
+import com.dreemurr.shinsekai.core.appJson
+import com.dreemurr.shinsekai.core.writeTextAtomic
 import com.dreemurr.shinsekai.settings.ApiKeyCipher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -10,8 +12,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 // 声音卡片存 filesDir/voice_cards.json 单文件列表，临时文件原子替换；按创建时间倒序。
@@ -35,7 +35,7 @@ class VoiceCardRepository(
     suspend fun load() = mutex.withLock {
         withContext(io) {
             _cards.value = runCatching {
-                voiceCardJson.decodeFromString(voiceCardListSerializer, file.readText())
+                appJson.decodeFromString(voiceCardListSerializer, file.readText())
             }.getOrDefault(emptyList())
                 .filter { it.providerEnum != null }
                 .sortedByDescending { it.createdAt }
@@ -60,17 +60,6 @@ class VoiceCardRepository(
 
     // 先写临时文件再原子替换。
     private fun persist(cards: List<VoiceCard>) {
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        try {
-            file.parentFile?.mkdirs()
-            tmp.writeText(voiceCardJson.encodeToString(voiceCardListSerializer, cards))
-            if (!tmp.renameTo(file)) {
-                Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            tmp.delete()
-            throw e
-        }
+        writeTextAtomic(file, appJson.encodeToString(voiceCardListSerializer, cards))
     }
 }

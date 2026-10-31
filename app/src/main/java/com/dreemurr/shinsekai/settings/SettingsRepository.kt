@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -41,9 +42,11 @@ class SettingsRepository(
             emit(emptyPreferences())
         }
 
-    /** 全量配置（含全部提供商），供设置页编辑。 */
+    /** 全量配置（含全部提供商），供设置页编辑；仅配置相关 key 变化时才重算（含 Keystore 解密）。 */
     val allSettings: StateFlow<AllProviderSettings> = preferences
-        .map { p -> readAll(p) }
+        .map(::rawConfig)
+        .distinctUntilChanged()
+        .map { raw -> raw.toSettings(cipher) }
         .stateIn(scope, SharingStarted.Eagerly, AllProviderSettings())
 
     /** 新手引导是否已完成；null 表示尚未读取，缺失 key 或读取失败均视为未完成。 */
@@ -114,34 +117,60 @@ class SettingsRepository(
         }
     }
 
+    // 配置相关 key 的原始快照；主题/音量/引导等无关写入不触发解密重算。
     // 旧版单配置 key 首次读取时回退到 OpenAI（Responses）配置，保存后清理。
-    private fun readAll(p: Preferences): AllProviderSettings {
-        val openai = ProviderConfig(
-            baseUrl = p[KEY_OPENAI_BASE_URL] ?: p[LEGACY_BASE_URL] ?: "",
-            apiKey = cipher.decrypt(p[KEY_OPENAI_API_KEY_CIPHER] ?: p[LEGACY_API_KEY_CIPHER] ?: ""),
-            modelName = p[KEY_OPENAI_MODEL_NAME] ?: p[LEGACY_MODEL_NAME] ?: "",
-            apiType = p[OPENAI_API_TYPE].toEnum(OpenAiApiType.RESPONSES),
-        )
-        val anthropic = ProviderConfig(
-            baseUrl = p[KEY_ANTHROPIC_BASE_URL] ?: "",
-            apiKey = cipher.decrypt(p[KEY_ANTHROPIC_API_KEY_CIPHER] ?: ""),
-            modelName = p[KEY_ANTHROPIC_MODEL_NAME] ?: "",
-        )
-        val google = ProviderConfig(
-            baseUrl = p[KEY_GOOGLE_BASE_URL] ?: "",
-            apiKey = cipher.decrypt(p[KEY_GOOGLE_API_KEY_CIPHER] ?: ""),
-            modelName = p[KEY_GOOGLE_MODEL_NAME] ?: "",
-        )
-        return AllProviderSettings(
-            activeProvider = p[ACTIVE_PROVIDER].toEnum(LlmProvider.OPENAI),
-            configs = mapOf(
-                LlmProvider.OPENAI to openai,
-                LlmProvider.ANTHROPIC to anthropic,
-                LlmProvider.GOOGLE to google,
+    private data class RawConfig(
+        val active: String?,
+        val apiType: String?,
+        val effort: String?,
+        val openaiBaseUrl: String?,
+        val openaiKeyCipher: String?,
+        val openaiModelName: String?,
+        val anthropicBaseUrl: String?,
+        val anthropicKeyCipher: String?,
+        val anthropicModelName: String?,
+        val googleBaseUrl: String?,
+        val googleKeyCipher: String?,
+        val googleModelName: String?,
+    )
+
+    private fun rawConfig(p: Preferences) = RawConfig(
+        active = p[ACTIVE_PROVIDER],
+        apiType = p[OPENAI_API_TYPE],
+        effort = p[REASONING_EFFORT],
+        openaiBaseUrl = p[KEY_OPENAI_BASE_URL] ?: p[LEGACY_BASE_URL],
+        openaiKeyCipher = p[KEY_OPENAI_API_KEY_CIPHER] ?: p[LEGACY_API_KEY_CIPHER],
+        openaiModelName = p[KEY_OPENAI_MODEL_NAME] ?: p[LEGACY_MODEL_NAME],
+        anthropicBaseUrl = p[KEY_ANTHROPIC_BASE_URL],
+        anthropicKeyCipher = p[KEY_ANTHROPIC_API_KEY_CIPHER],
+        anthropicModelName = p[KEY_ANTHROPIC_MODEL_NAME],
+        googleBaseUrl = p[KEY_GOOGLE_BASE_URL],
+        googleKeyCipher = p[KEY_GOOGLE_API_KEY_CIPHER],
+        googleModelName = p[KEY_GOOGLE_MODEL_NAME],
+    )
+
+    private fun RawConfig.toSettings(cipher: ApiKeyCipher) = AllProviderSettings(
+        activeProvider = active.toEnum(LlmProvider.OPENAI),
+        configs = mapOf(
+            LlmProvider.OPENAI to ProviderConfig(
+                baseUrl = openaiBaseUrl ?: "",
+                apiKey = cipher.decrypt(openaiKeyCipher ?: ""),
+                modelName = openaiModelName ?: "",
+                apiType = apiType.toEnum(OpenAiApiType.RESPONSES),
             ),
-            reasoningEffort = p[REASONING_EFFORT] ?: ReasoningEffort.none.name,
-        )
-    }
+            LlmProvider.ANTHROPIC to ProviderConfig(
+                baseUrl = anthropicBaseUrl ?: "",
+                apiKey = cipher.decrypt(anthropicKeyCipher ?: ""),
+                modelName = anthropicModelName ?: "",
+            ),
+            LlmProvider.GOOGLE to ProviderConfig(
+                baseUrl = googleBaseUrl ?: "",
+                apiKey = cipher.decrypt(googleKeyCipher ?: ""),
+                modelName = googleModelName ?: "",
+            ),
+        ),
+        reasoningEffort = effort ?: ReasoningEffort.none.name,
+    )
 
     private inline fun <reified T : Enum<T>> String?.toEnum(fallback: T): T =
         enumValues<T>().firstOrNull { it.name == this } ?: fallback

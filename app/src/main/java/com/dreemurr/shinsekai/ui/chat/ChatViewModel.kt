@@ -193,6 +193,7 @@ class ChatViewModel(
                 replayHistory(session)
                 // 历史中没有 SCENE/bgm 时回落到场景 1 + BGM 1。
                 initPresentationDefaults()
+                refreshTokenEstimate()
                 // 每次进入聊天页检测一次；超限弹窗由用户决定是否压缩。
                 _state.update {
                     it.copy(showCompressConfirm = it.tokenEstimate > ContextCompressor.MAX_CONTEXT_TOKENS)
@@ -213,6 +214,7 @@ class ChatViewModel(
     }
 
     // 同步会话级字段与派生 UI 状态；快照/开关语义见各字段注释。
+    // token 估算较贵（含 assistant 条目 JSON 重解析），只在回合结束/回溯/压缩等节点经 refreshTokenEstimate 重算。
     private fun applySession(session: ChatSession) {
         sessionVoiceLanguages = session.voiceLanguages
         cloudTtsEnabled = session.cloudTtsEnabled
@@ -222,12 +224,19 @@ class ChatViewModel(
         val byId = characterRepo.characters.value.associateBy { it.id }
         val playerName = session.playerCharacterId?.let(byId::get)?.name
         _state.update {
-            it.copy(
-                title = session.title,
-                playerName = playerName,
-                history = session.history,
-                tokenEstimate = TokenEstimator.estimate(sessionRepo.buildInput(session)),
-            )
+            it.copy(title = session.title, playerName = playerName, history = session.history)
+        }
+    }
+
+    // 当前会话快照；各流程共用。
+    private fun currentSession(): ChatSession? =
+        sessionRepo.sessions.value.firstOrNull { it.id == sessionId }
+
+    // 全量重建 LLM input 并估算 token；仅在进入页面/回溯/压缩/回合结束时调用。
+    private fun refreshTokenEstimate() {
+        val session = currentSession() ?: return
+        _state.update {
+            it.copy(tokenEstimate = TokenEstimator.estimate(sessionRepo.buildInput(session)))
         }
     }
 
@@ -278,10 +287,14 @@ class ChatViewModel(
     }
 
     // 有未播内容时把最后一条 assistant 截断为已播出的 dialog；一条都没播则整条删除。
+    // 失败轮一律整条删除：失败内容视为无效，不保留已播部分进记录。
     private suspend fun trimUnplayedReply() {
+        if (terminal is Terminal.Failed) {
+            dropFailedFragment()
+            return
+        }
         if (enqueuedDialogs <= playedDialogs.size) return
-        val last = sessionRepo.sessions.value
-            .firstOrNull { it.id == sessionId }?.history?.lastOrNull()
+        val last = currentSession()?.history?.lastOrNull()
         if (last?.role != Role.assistant) return
         val content = if (playedDialogs.isEmpty()) "" else DialogJsonParser.encode(playedDialogs)
         sessionRepo.truncateLastAssistant(sessionId, content)
@@ -289,9 +302,48 @@ class ChatViewModel(
         playedDialogs.clear()
     }
 
-    // 重试复用 history 中的用户消息。
+    // 失败残片不留上下文：末条为未完成 assistant 时整条删除，复用回溯的截断入口。
+    private suspend fun dropFailedFragment() {
+        val last = currentSession()?.history?.lastOrNull()
+        if (last?.role != Role.assistant || last.complete) return
+        sessionRepo.truncateLastAssistant(sessionId, "")
+    }
+
+    // 失败轮整轮回溯：一次快照判定末尾形态，单次 truncate 到该轮用户消息之前；返回原文供回填。
+    private suspend fun rewindFailedTurn(): String? {
+        val history = currentSession()?.history.orEmpty()
+        val last = history.lastOrNull() ?: return null
+        return when {
+            // [.., user, 残片]：一次截掉两者。
+            last.role == Role.assistant && !last.complete -> {
+                val user = history.getOrNull(history.size - 2)
+                if (user != null && user.role == Role.user && !user.summary) {
+                    sessionRepo.truncate(sessionId, keep = history.size - 2)
+                    user.content
+                } else {
+                    dropFailedFragment() // 防御：末尾只有残片
+                    null
+                }
+            }
+
+            // [.., user]：截掉该轮输入。
+            last.role == Role.user && !last.summary -> {
+                sessionRepo.truncate(sessionId, keep = history.size - 1)
+                last.content
+            }
+
+            else -> null
+        }
+    }
+
+    // 重试复用 history 中的用户消息；先整条删除失败残片，整轮重新生成。
     fun retry() {
-        if (checkConfigured()) startStream()
+        if (!checkConfigured()) return
+        viewModelScope.launch {
+            dropPlayback()
+            dropFailedFragment()
+            startStream()
+        }
     }
 
     fun stop() {
@@ -307,9 +359,7 @@ class ChatViewModel(
                 streamJob?.join()
             }
             dropPlayback()
-            val draft = sessionRepo.sessions.value
-                .firstOrNull { it.id == sessionId }
-                ?.history?.getOrNull(historyIndex)?.content
+            val draft = currentSession()?.history?.getOrNull(historyIndex)?.content
             sessionRepo.truncate(sessionId, keep = historyIndex)
             restoreFromHistory()
             if (draft != null) {
@@ -344,7 +394,7 @@ class ChatViewModel(
             _state.update { it.copy(showCompressConfirm = false) }
             return
         }
-        val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId } ?: return
+        val session = currentSession() ?: return
         compressJob = viewModelScope.launch {
             _state.update { it.copy(compressing = true, showCompressConfirm = false) }
             try {
@@ -354,6 +404,7 @@ class ChatViewModel(
                     _toast.value = container.appContext.getString(R.string.compress_too_few)
                 } else {
                     sessionRepo.applyCompaction(sessionId, result.summaryEntry, result.foldedCount)
+                    refreshTokenEstimate()
                     _toast.value = container.appContext.getString(
                         R.string.compress_success_format,
                         result.foldedCount,
@@ -402,17 +453,23 @@ class ChatViewModel(
             )
         }
         _visibleSpeech.value = ""
-        val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId } ?: return
+        val session = currentSession() ?: return
         replayHistory(session)
         initPresentationDefaults()
+        refreshTokenEstimate()
     }
 
     fun consumeNotConfigured() {
         _state.update { it.copy(notConfigured = false) }
     }
 
+    // 返回输入：失败轮按回溯处理——残片与该轮输入一并截出历史，原文回填输入框待改重发。
     fun dismissError() {
-        _state.update { it.copy(phase = Phase.WaitingInput, error = null) }
+        viewModelScope.launch {
+            val draft = rewindFailedTurn()
+            restoreFromHistory()
+            _state.update { it.copy(phase = Phase.WaitingInput, error = null, pendingDraft = draft) }
+        }
     }
 
     fun onBoxTap() {
@@ -479,12 +536,18 @@ class ChatViewModel(
         prefetchChannel.close()
         val snapshot = _state.value
         chatRepo.cancel()
-        if (snapshot.phase == Phase.Streaming || snapshot.phase == Phase.Playing) {
-            chatRepo.rawTextSoFar()?.takeIf { it.isNotBlank() }?.let { raw ->
-                container.applicationScope.launch {
-                    sessionRepo.appendAssistantResult(sessionId, raw, complete = false)
+        when (snapshot.phase) {
+            // 报错界面直接退出：失败轮（残片 + 该轮输入）同样整轮回溯，不留给重进后的上下文。
+            Phase.Error -> container.applicationScope.launch { rewindFailedTurn() }
+
+            Phase.Streaming, Phase.Playing ->
+                chatRepo.rawTextSoFar()?.takeIf { it.isNotBlank() }?.let { raw ->
+                    container.applicationScope.launch {
+                        sessionRepo.appendAssistantResult(sessionId, raw, complete = false)
+                    }
                 }
-            }
+
+            else -> Unit
         }
         voicePlayer.release()
         // 离开聊天页即停 BGM；重进按历史记录恢复。
@@ -535,7 +598,7 @@ class ChatViewModel(
         // 串行合成消费者：逐条请求云 TTS，避免并发触发限流。
         prefetchJob = viewModelScope.launch { consumePrefetch() }
         streamJob = viewModelScope.launch {
-            val session = sessionRepo.sessions.value.firstOrNull { it.id == sessionId }
+            val session = currentSession()
             if (session == null) {
                 _state.update { it.copy(streaming = false, phase = Phase.Error, error = "会话不存在") }
                 return@launch
@@ -583,16 +646,18 @@ class ChatViewModel(
                 terminal = Terminal.Stopped
                 persistAssistant(event.rawText, complete = false)
                 _state.update { it.copy(streaming = false, phase = Phase.WaitingInput, queueSize = queue.size) }
+                refreshTokenEstimate()
             }
         }
     }
 
-    // 未播放任何 dialog 时立即报错，否则留待队列播完。
+    // 未播放任何 dialog 时立即报错，否则留待队列播完；回合结束统一刷新 token 估算。
     private fun finishStream(error: String?) {
         _state.update {
             if (error == null) it.copy(streaming = false)
             else it.copy(streaming = false, phase = Phase.Error, error = error)
         }
+        refreshTokenEstimate()
     }
 
     // 入队并按需发起云语音预取：说话者绑定可用卡片且有台词才合成。

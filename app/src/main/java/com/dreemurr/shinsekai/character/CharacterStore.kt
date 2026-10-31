@@ -1,5 +1,9 @@
 package com.dreemurr.shinsekai.character
 
+import com.dreemurr.shinsekai.core.appJson
+import com.dreemurr.shinsekai.core.cleanFileName
+import com.dreemurr.shinsekai.core.uniqueAssetName
+import com.dreemurr.shinsekai.core.writeTextAtomic
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -37,7 +41,7 @@ internal class CharacterStore(private val rootDir: File) {
             ?: return emptyList()
         return dirs.mapNotNull { dir ->
             runCatching {
-                characterJson.decodeFromString(Character.serializer(), File(dir, CHARACTER_JSON).readText())
+                appJson.decodeFromString(Character.serializer(), File(dir, CHARACTER_JSON).readText())
             }.getOrNull()
         }.sortedBy { it.importedAt }
     }
@@ -82,14 +86,11 @@ internal class CharacterStore(private val rootDir: File) {
 
     // 临时文件写完后再替换。
     fun writeCharacterJson(dir: File, character: Character) {
-        val target = File(dir, CHARACTER_JSON)
-        val tmp = File(dir, "$CHARACTER_JSON.tmp")
         try {
-            dir.mkdirs()
-            tmp.writeText(characterJson.encodeToString(Character.serializer(), character))
-            if (!tmp.renameTo(target)) {
-                Files.move(tmp.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-            }
+            writeTextAtomic(
+                File(dir, CHARACTER_JSON),
+                appJson.encodeToString(Character.serializer(), character),
+            )
         } catch (e: IOException) {
             throw CharacterPackageException(ImportError.Io, "写入 ${CHARACTER_JSON} 失败: ${character.name}", e)
         }
@@ -174,7 +175,7 @@ internal class CharacterStore(private val rootDir: File) {
         }
 
         fun copy(source: File): String? {
-            val name = uniqueName(cleanFileName(source.name))
+            val name = uniqueAssetName(cleanFileName(source.name), usedNames)
             return try {
                 source.copyTo(File(destDir, name), overwrite = false)
                 usedNames += name
@@ -182,20 +183,6 @@ internal class CharacterStore(private val rootDir: File) {
             } catch (_: IOException) {
                 null
             }
-        }
-
-        private fun uniqueName(name: String): String {
-            if (name !in usedNames) return name
-            val dot = name.lastIndexOf('.')
-            val stem = if (dot > 0) name.substring(0, dot) else name
-            val ext = if (dot > 0) name.substring(dot) else ""
-            var index = 1
-            var candidate = "$stem-$index$ext"
-            while (candidate in usedNames) {
-                index++
-                candidate = "$stem-$index$ext"
-            }
-            return candidate
         }
     }
 
@@ -218,16 +205,4 @@ internal class CharacterStore(private val rootDir: File) {
         const val STAGING_DIR = ".staging"
         const val CHARACTER_JSON = "character.json"
     }
-}
-
-// 文件名清洗规则（正则预编译）。
-private val ILLEGAL_FILE_NAME_CHARS = Regex("[\\x00-\\x1f<>:\"/\\\\|?*]")
-
-private fun cleanFileName(raw: String): String {
-    val name = ILLEGAL_FILE_NAME_CHARS.replace(raw, "_").trim(' ', '.')
-    if (name.isEmpty()) return "asset"
-    if (name.length <= 120) return name
-    val dot = name.lastIndexOf('.')
-    val ext = if (dot > 0) name.substring(dot) else ""
-    return name.substring(0, 120 - ext.length) + ext
 }
