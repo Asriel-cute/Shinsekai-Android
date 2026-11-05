@@ -4,8 +4,7 @@ import com.dreemurr.shinsekai.session.ChatSession
 import com.dreemurr.shinsekai.session.SessionEntry
 import java.io.IOException
 
-// 手动上下文压缩：把较早记录折叠为一条摘要，system 与最近条目保留。
-// 摘要作为 user 条目落盘，磁盘、记录面板与请求上下文保持一致。
+// 手动上下文压缩：较早记录折叠为一条 user 摘要落盘，system 与最近条目保留。
 class ContextCompressor(private val chatRepository: ChatRepository) {
 
     data class Compaction(val summaryEntry: SessionEntry, val foldedCount: Int)
@@ -46,12 +45,10 @@ class ContextCompressor(private val chatRepository: ChatRepository) {
                 entry.summary -> lines.add(entry.content)
                 entry.role == Role.user -> lines.add("用户：" + entry.content)
                 entry.role == Role.assistant -> {
+                    // SCENE/bgm/CAMERA 展示条目不进摘要，与 buildInput 过滤口径一致；过滤后为空则跳过。
                     val dialogs = DialogJsonParser.parseAll(entry.content)
-                    if (dialogs.isEmpty()) {
-                        lines.add("助手：" + entry.content)
-                    } else {
-                        for (dialog in dialogs) lines.add("${dialog.name}：${dialog.speech}")
-                    }
+                        .filterNot { presentationKind(it.name) != null }
+                    for (dialog in dialogs) lines.add("${dialog.name}：${dialog.speech}")
                 }
 
                 else -> Unit

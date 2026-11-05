@@ -2,8 +2,7 @@ package com.dreemurr.shinsekai.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Shinsekai 2.3.1 Design Tokens
-// 种子强调色与高亮
+// Shinsekai 2.3.1 Design Tokens：种子强调色与高亮
 val ShinsekaiAccent = Color(0xFFD4788E)             // 柔和樱粉 (Primary Accent)
 val ShinsekaiAccentHover = Color(0xFFE48FA4)        // 樱粉悬停高亮
 val ShinsekaiPurple = Color(0xFFBD93F9)             // 薰衣紫 (Secondary Accent)

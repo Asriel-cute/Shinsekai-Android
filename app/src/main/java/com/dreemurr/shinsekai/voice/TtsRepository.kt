@@ -243,8 +243,7 @@ class TtsRepository {
         return SynthResult.Ok(hexToBytes(hex))
     }
 
-    // SSE 帧逐段返回 Base64 音频，拼接至 finish_reason == stop；
-    // 非流式响应只给 24h 时效的 http 下载链接（受明文流量限制），故不走非流式。
+    // SSE 逐段返回 Base64 拼接至 finish_reason==stop；非流式仅给 24h 时效链接，故不走非流式。
     private suspend fun synthAliyun(params: SynthParams): SynthResult {
         if (params.model.isBlank()) return SynthResult.Failure("无法从 Voice ID 解析合成模型")
         val call = apiFor(params.baseUrl).postStream(

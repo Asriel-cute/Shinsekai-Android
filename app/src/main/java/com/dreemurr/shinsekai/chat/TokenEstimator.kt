@@ -2,10 +2,12 @@ package com.dreemurr.shinsekai.chat
 
 import kotlin.math.roundToInt
 
-// 无字典的轻量 token 估算：CJK/假名/谚文按一字一代，ASCII 约 3.3 字符一代。
-// 仅用于触发提示与展示，不追求精确。
+// 无字典轻量估算：CJK/假名/谚文一字一代、ASCII 约 3.3 字符一代；仅用于提示与展示。
 object TokenEstimator {
     private const val ENTRY_OVERHEAD = 4
+
+    // 摄像头帧按视觉 token 粗估，仅影响提示与展示，不追求精确。
+    private const val IMAGE_TOKENS = 800
 
     fun estimate(text: String): Int {
         var units = 0.0
@@ -13,8 +15,9 @@ object TokenEstimator {
         return units.roundToInt()
     }
 
-    fun estimate(items: List<InputItem>): Int =
-        items.sumOf { ENTRY_OVERHEAD + estimate(it.content) }
+    fun estimate(items: List<InputItem>): Int = items.sumOf {
+        ENTRY_OVERHEAD + estimate(it.content) + if (it.imageBase64 != null || it.imagePath != null) IMAGE_TOKENS else 0
+    }
 
     private fun weight(code: Int): Double = when (code) {
         in 0x3040..0x30FF, in 0x31F0..0x31FF, // 假名

@@ -148,8 +148,7 @@ internal fun <T> LabeledSegmentedRow(
     }
 }
 
-// 连接信息四项：角色名/服务商/BaseUrl/API Key，添加与克隆表单共用；
-// enabled=false 时锁定输入（克隆进行中），服务商切换不在此组件内做字段清理。
+// 连接信息四项（角色名/服务商/BaseUrl/API Key），添加与克隆表单共用；enabled=false 锁定输入。
 @Composable
 internal fun ConnectPanelFields(
     name: String,

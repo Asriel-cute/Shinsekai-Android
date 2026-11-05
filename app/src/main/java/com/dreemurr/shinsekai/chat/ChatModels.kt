@@ -42,15 +42,17 @@ data class ChatSettings(
     val reasoningEffort: String = ReasoningEffort.none.name,
 )
 
+// imagePath 为会话内帧文件路径（app 侧指针），发送前在 IO 线程读出 imageBase64；两者均 null 时按纯文本序列化，与旧格式一致。
 @Serializable
 data class InputItem(
     val type: String = "message",
     val role: Role,
     val content: String,
+    val imagePath: String? = null,
+    val imageBase64: String? = null,
 )
 
-// {dialog:[{name,sprite,speech,translate?}]}；sprite 是 1 基编号字符串，"-1" 不切换立绘。
-// translate 仅供云语音合成，不参与前端展示。
+// {dialog:[{name,sprite,speech,translate?}]}；sprite 为 1 基编号字符串、"-1" 不切换；translate 仅供云语音合成。
 @Serializable
 data class Dialog(
     val name: String = "",

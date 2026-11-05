@@ -22,8 +22,7 @@ internal class ZipPackageException(
     cause: Throwable? = null,
 ) : Exception(message, cause)
 
-// 只读取根目录 yaml 与指定素材目录；信任包内路径，仅归一化分隔符。
-// PK 头先暂存整包并用 ZipFile 按需解压（避免流式穿越大体量素材）；失败回退 ZipInputStream。
+// 只读根目录 yaml 与指定素材目录；PK 头包先整包暂存按需解压，失败回退 ZipInputStream。
 internal object ZipPackageExtractor {
 
     // open 必须能重复打开同一来源。

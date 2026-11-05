@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.chat
 
+import android.util.Base64
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -19,6 +20,7 @@ import okhttp3.ResponseBody
 import retrofit2.Call
 import retrofit2.Response
 import retrofit2.Retrofit
+import java.io.File
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -89,6 +91,9 @@ class ChatRepository {
         val effort = ReasoningEffort.entries.firstOrNull { it.name == settings.reasoningEffort }
             ?: ReasoningEffort.none
 
+        // 帧文件在 IO 线程读出 base64；文件缺失的条目降级为纯文字。
+        val resolvedHistory = history.map(::resolveImage)
+
         val api = apiFor(settings.baseUrl)
 
         cancelRequested = false
@@ -98,7 +103,7 @@ class ChatRepository {
         val call = api.postStream(
             spec.streamUrl(settings.modelName),
             spec.headers(settings.apiKey),
-            spec.buildStreamBody(json, settings.modelName, history, effort),
+            spec.buildStreamBody(json, settings.modelName, resolvedHistory, effort),
         )
         currentCall = call
 
@@ -289,6 +294,15 @@ class ChatRepository {
     }
 
     private fun raw(): String = synchronized(rawBuffer) { rawBuffer.toString() }
+
+    // 帧文件读为 base64（flowOn(IO) 保证不在主线程）；失败按纯文字发送。
+    private fun resolveImage(item: InputItem): InputItem {
+        val path = item.imagePath ?: return item
+        val base64 = runCatching {
+            Base64.encodeToString(File(path).readBytes(), Base64.NO_WRAP)
+        }.getOrNull() ?: return item
+        return item.copy(imageBase64 = base64)
+    }
 
     private fun isUserCancel(call: Call<ResponseBody>): Boolean = cancelRequested || call.isCanceled()
 

@@ -43,6 +43,18 @@
     <string name="action_go_import">去导入</string>
     <string name="session_setup_title">会话设置</string>
     <string name="action_save_continue">保存并继续</string>
+    <string name="session_setup_name">聊天名称（可选）</string>
+    <string name="session_setup_name_hint">留空按出场角色自动命名</string>
+    <string name="session_setup_type">聊天类型</string>
+    <string name="session_setup_type_text">普通聊天</string>
+    <string name="session_setup_type_text_hint">视觉小说式演出，点击推进剧情</string>
+    <string name="session_setup_type_video">视频聊天</string>
+    <string name="session_setup_type_video_hint">视频通话式对话，角色可看到你的摄像头画面</string>
+    <string name="session_setup_selected_count_format">已选 %1$d 人</string>
+    <string name="action_select_all">全选</string>
+    <string name="action_clear_selection">清空</string>
+    <string name="action_expand">展开</string>
+    <string name="action_collapse">收起</string>
     <string name="session_setup_cloud_tts">云语音</string>
     <string name="session_setup_cloud_tts_hint">关闭后改用本地立绘语音；主控台词只显示不发声</string>
     <string name="session_setup_player">主控角色</string>
@@ -97,6 +109,12 @@
     <string name="chat_settings">聊天设置</string>
     <string name="chat_settings_bgm_volume">背景音乐音量</string>
     <string name="chat_settings_volume_percent_format">%1$d%%</string>
+    <string name="chat_settings_camera_threshold">画面变化阈值</string>
+    <string name="chat_settings_camera_threshold_percent_format">%1$d%%</string>
+    <string name="chat_settings_camera_cooldown">画面变化冷却</string>
+    <string name="chat_settings_camera_cooldown_seconds_format">%1$d 秒</string>
+    <string name="chat_settings_camera_cooldown_off">关闭</string>
+    <string name="chat_camera_permission_denied">未授予摄像头权限，无法使用视频聊天</string>
 
     <!-- 角色页 -->
     <string name="characters_title">角色</string>

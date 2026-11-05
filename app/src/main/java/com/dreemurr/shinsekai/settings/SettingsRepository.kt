@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.dreemurr.shinsekai.chat.AllProviderSettings
@@ -64,6 +65,18 @@ class SettingsRepository(
         .map { p -> p[BGM_VOLUME] ?: DEFAULT_BGM_VOLUME }
         .stateIn(scope, SharingStarted.Eagerly, DEFAULT_BGM_VOLUME)
 
+    /** 视频聊天画面变化阈值（0.10..0.70），全局设置；未设置按默认值 0.2，越界旧值读取时钳制。 */
+    val cameraChangeThreshold: StateFlow<Float> = preferences
+        .map { p -> p[CAMERA_CHANGE_THRESHOLD] ?: DEFAULT_CAMERA_CHANGE_THRESHOLD }
+        .map { it.coerceIn(0.10f, 0.70f) }
+        .stateIn(scope, SharingStarted.Eagerly, DEFAULT_CAMERA_CHANGE_THRESHOLD)
+
+    /** 视频聊天画面变化冷却（秒），全局设置；0=关闭自动发送，未设置按默认值 30，越界旧值读取时钳制。 */
+    val cameraCooldownSeconds: StateFlow<Int> = preferences
+        .map { p -> p[CAMERA_COOLDOWN_SECONDS] ?: DEFAULT_CAMERA_COOLDOWN_SECONDS }
+        .map { seconds -> if (seconds == 0) 0 else seconds.coerceIn(10, 120) }
+        .stateIn(scope, SharingStarted.Eagerly, DEFAULT_CAMERA_COOLDOWN_SECONDS)
+
     /** 激活提供商展开后的有效配置，供聊天链路。 */
     val settings: StateFlow<ChatSettings> = allSettings
         .map { s ->
@@ -117,8 +130,21 @@ class SettingsRepository(
         }
     }
 
-    // 配置相关 key 的原始快照；主题/音量/引导等无关写入不触发解密重算。
-    // 旧版单配置 key 首次读取时回退到 OpenAI（Responses）配置，保存后清理。
+    /** 画面变化阈值松手落盘。 */
+    suspend fun setCameraChangeThreshold(threshold: Float) {
+        appContext.settingsDataStore.edit { p ->
+            p[CAMERA_CHANGE_THRESHOLD] = threshold.coerceIn(0.10f, 0.70f)
+        }
+    }
+
+    /** 画面变化冷却松手落盘；0=关闭自动发送。 */
+    suspend fun setCameraCooldownSeconds(seconds: Int) {
+        appContext.settingsDataStore.edit { p ->
+            p[CAMERA_COOLDOWN_SECONDS] = if (seconds == 0) 0 else seconds.coerceIn(10, 120)
+        }
+    }
+
+    // 配置 key 原始快照（无关写入不触发解密重算）；旧版单配置 key 首次读取回退 OpenAI（Responses）。
     private data class RawConfig(
         val active: String?,
         val apiType: String?,
@@ -184,6 +210,10 @@ class SettingsRepository(
         private val THEME_MODE = stringPreferencesKey("theme_mode")
         private val BGM_VOLUME = floatPreferencesKey("bgm_volume")
         private const val DEFAULT_BGM_VOLUME = 0.3f
+        private val CAMERA_CHANGE_THRESHOLD = floatPreferencesKey("camera_change_threshold")
+        private const val DEFAULT_CAMERA_CHANGE_THRESHOLD = 0.2f
+        private val CAMERA_COOLDOWN_SECONDS = intPreferencesKey("camera_cooldown_seconds")
+        private const val DEFAULT_CAMERA_COOLDOWN_SECONDS = 30
         private val ACTIVE_PROVIDER = stringPreferencesKey("active_provider")
         private val OPENAI_API_TYPE = stringPreferencesKey("openai_api_type")
         private val REASONING_EFFORT = stringPreferencesKey("reasoning_effort")

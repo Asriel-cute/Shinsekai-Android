@@ -96,8 +96,7 @@ fun CharactersScreen(
     ) { uri -> uri?.let(vm::import) }
 
     LaunchedEffect(importUi) {
-        // NeedsDecision 留给冲突弹窗，不在这里消费。
-        // 导入结果经系统 Toast 提示：带警告或失败用长时，纯成功用短时。
+        // NeedsDecision 留给冲突弹窗；导入结果经 Toast 提示（警告/失败长时，成功短时）。
         when (val ui = importUi) {
             is CharactersViewModel.ImportUi.Success -> {
                 val text = resources.getString(ui.messageRes, ui.count) +

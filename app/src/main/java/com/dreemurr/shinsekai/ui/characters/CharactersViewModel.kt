@@ -144,8 +144,7 @@ class CharactersViewModel(private val container: AppContainer) : ViewModel() {
             ImportError.Io -> R.string.err_io
         }
 
-        // 扩展名优先；无法判断时流式扫条目名，根目录出现 background.yaml 即判为背景包。
-        // 导出工具均把 yaml 写在首位，通常首个条目即命中。
+        // 扩展名优先；无法判断时流式扫条目名，根目录 background.yaml 即判背景包（导出工具 yaml 在首位）。
         private fun sniffBackground(open: () -> InputStream, name: String?): Boolean {
             if (name != null && name.endsWith(".char", ignoreCase = true)) return false
             if (name != null && name.endsWith(".bg", ignoreCase = true)) return true

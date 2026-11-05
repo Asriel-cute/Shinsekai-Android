@@ -15,11 +15,12 @@ object TemplateGenerator {
         voiceLanguages: Map<String, String> = emptyMap(),
         playerCharacterId: String? = null,
         background: Background? = null,
+        videoChat: Boolean = false,
     ): String {
         require(characters.isNotEmpty()) { "生成模板至少需要一个角色" }
 
-        // 至少两人时主控才有效；找不到角色按未设置处理。
-        val player = playerCharacterId
+        // 视频会话与主控互斥；至少两人且角色在选角内主控才有效。
+        val player = if (videoChat) null else playerCharacterId
             ?.takeIf { characters.size >= 2 }
             ?.let { id -> characters.firstOrNull { it.id == id } }
 
@@ -52,8 +53,9 @@ object TemplateGenerator {
             appendSpriteGuide(spriteChars)
             appendCharacterSettings(settingChars)
             appendBackgroundSection(background, hasScenes, hasBgm)
+            appendVideoSection(videoChat)
             appendPlayerSection(player)
-            appendRequirements(names, spriteChars, plainChars, translationTargets, hasScenes, hasBgm)
+            appendRequirements(names, spriteChars, plainChars, translationTargets, hasScenes, hasBgm, videoChat)
             append('\n')
             appendOpening(hasScenes, hasBgm)
             append(JSON_REMINDER).append('\n')
@@ -130,8 +132,14 @@ object TemplateGenerator {
         }
     }
 
-    // 主控固定语义：AI 可补写日常台词，并按需复述用户实际台词。
-    // 字段结构、立绘与翻译规则沿用通用提示词，此处只写主控专属语义。
+    // 视频通话段：画面消息与 CAMERA 工具调用语义，字段规则在要求段并列（主控与视频会话互斥）。
+    private fun StringBuilder.appendVideoSection(videoChat: Boolean) {
+        if (!videoChat) return
+        append("视频通话：你正在与用户进行视频通话。用户的画面会不定期以图像消息（文字标记为「（摄像头画面）」）出现在对话中；看到图像时对画面内容自然反应，没有图像时不要假装看得见，按需索要画面。\n\n")
+        append("想看用户当前画面时，输出一条 name 为 CAMERA 的 dialog 发起画面请求；发起后意味着立即结束本轮回复，用户画面会随后送达，下一轮再对画面作出反应。\n\n")
+    }
+
+    // 主控固定语义：AI 可补写日常台词并按需复述用户台词，其余规则沿用通用提示词。
     private fun StringBuilder.appendPlayerSection(player: Character?) {
         if (player == null) return
         val name = player.name
@@ -151,6 +159,7 @@ object TemplateGenerator {
         translationTargets: List<Pair<String, String>>,
         hasScenes: Boolean,
         hasBgm: Boolean,
+        videoChat: Boolean,
     ) {
         append("要求：\n")
         rule("格式严格：输出内容必须严格且仅为 JSON 格式。")
@@ -158,10 +167,11 @@ object TemplateGenerator {
             add("旁白")
             if (hasScenes) add("SCENE")
             if (hasBgm) add("bgm")
+            if (videoChat) add("CAMERA")
         }.joinToString("、")
         rule("角色名限制：name 字段只能是以下之一：$names 以及其他可能出现的人物名，或者固定关键字：$reservedKeywords。")
         appendSpriteRules(spriteChars, plainChars)
-        appendPresentationRules(hasScenes, hasBgm)
+        appendPresentationRules(hasScenes, hasBgm, videoChat)
         rule("台词风格：speech 字段须为简体中文，内容尽量符合角色个性、说话方式与背景设定。")
         appendTranslationRules(translationTargets)
         // 仅提示模型按句意拆条，不在前端截断。
@@ -187,12 +197,19 @@ object TemplateGenerator {
     }
 
     // 立绘/场景/BGM 共用 sprite 字段的 1 基编号语义，规则文案保持同一说法。
-    private fun StringBuilder.appendPresentationRules(hasScenes: Boolean, hasBgm: Boolean) {
+    private fun StringBuilder.appendPresentationRules(
+        hasScenes: Boolean,
+        hasBgm: Boolean,
+        videoChat: Boolean,
+    ) {
         if (hasScenes) {
             rule("场景切换：当 name 为 SCENE 时，sprite 字段填写场景编号（从 1 开始），如 3 表示切换到第 3 个场景；此时 speech 与 translate 留空。")
         }
         if (hasBgm) {
             rule("BGM切换：当 name 为 bgm 时，sprite 字段填写 BGM 编号（从 1 开始），如 2 表示切换到第 2 首；应根据当前氛围切换；此时 speech 与 translate 留空。")
+        }
+        if (videoChat) {
+            rule("画面请求：当 name 为 CAMERA 时，sprite 字段固定为 -1，此时 speech 与 translate 留空；该条目意味着本轮结束，等待下轮画面返回。")
         }
     }
 

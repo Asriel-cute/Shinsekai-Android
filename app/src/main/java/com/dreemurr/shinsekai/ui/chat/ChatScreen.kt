@@ -1,6 +1,10 @@
 package com.dreemurr.shinsekai.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -61,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,6 +75,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -109,10 +117,37 @@ fun ChatScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val toast by vm.toast.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var showRecord by remember { mutableStateOf(false) }
     var showChatSettings by remember { mutableStateOf(false) }
     var input by rememberSaveable { mutableStateOf("") }
     var rewindTarget by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    // 摄像头/立绘大小互换；离开页面重置为摄像头小窗默认态。
+    var cameraSwapped by rememberSaveable { mutableStateOf(false) }
+
+    // 视频会话进入即请求摄像头权限；拒绝直接退出，无法使用视频聊天。
+    val cameraDeniedText = stringResource(R.string.chat_camera_permission_denied)
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            vm.startCamera(lifecycleOwner)
+        } else {
+            Toast.makeText(context, cameraDeniedText, Toast.LENGTH_LONG).show()
+            onBack()
+        }
+    }
+    // 视频会话进入即请求摄像头权限，拒绝直接退出；key 含 lifecycleOwner 供旋转后重绑。
+    LaunchedEffect(state.videoChat, state.loading, lifecycleOwner) {
+        if (!state.videoChat || state.loading) return@LaunchedEffect
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            vm.startCamera(lifecycleOwner)
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
 
     val inputHint = state.playerName?.let {
         stringResource(R.string.chat_input_hint_as_format, it)
@@ -135,13 +170,14 @@ fun ChatScreen(
         }
     }
 
-    // 背景图全屏铺底，顶栏/立绘/对话框/输入栏叠在其上；无背景时保持纯色。
+    // 背景图全屏铺底；摄像头全屏互换时隐藏场景背景，底色沿用主题背景色。
+    val cameraFullscreen = cameraSwapped && state.cameraActive
     Box(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        state.backgroundImage?.let { BackgroundImage(it) }
+        if (!cameraFullscreen) state.backgroundImage?.let { BackgroundImage(it) }
 
         Column(Modifier.fillMaxSize()) {
             TopAppBar(
@@ -189,7 +225,37 @@ fun ChatScreen(
                     .fillMaxWidth(),
                 contentAlignment = Alignment.BottomCenter,
             ) {
-                state.sprite?.let { SpriteImage(it) }
+                // 互换时摄像头占满舞台、立绘退居小窗；用 cameraFullscreen 判定，摄像头未接管时立绘保持显示。
+                if (!cameraFullscreen) state.sprite?.let { SpriteImage(it) }
+                if (state.cameraActive) {
+                    vm.cameraPreviewView?.let { preview ->
+                        AndroidView(
+                            factory = { preview },
+                            modifier = (
+                                if (cameraSwapped) {
+                                    // 全屏铺满舞台区，无需圆角。
+                                    Modifier.fillMaxSize()
+                                } else {
+                                    Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(12.dp)
+                                        .size(width = 96.dp, height = 128.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                }
+                                ).clickable { cameraSwapped = !cameraSwapped },
+                        )
+                    }
+                    if (cameraSwapped) {
+                        SceneMiniWindow(
+                            background = state.backgroundImage,
+                            sprite = state.sprite,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(12.dp)
+                                .clickable { cameraSwapped = false },
+                        )
+                    }
+                }
             }
 
             DialogueBox(
@@ -221,8 +287,11 @@ fun ChatScreen(
     if (showChatSettings) {
         ModalBottomSheet(onDismissRequest = { showChatSettings = false }) {
             ChatSettingsSheetContent(
+                videoChat = state.videoChat,
                 onPreviewVolume = vm::previewBgmVolume,
                 onVolumeSettled = vm::setBgmVolume,
+                onCooldownSettled = vm::setCameraCooldown,
+                onThresholdSettled = vm::setCameraThreshold,
             )
         }
     }
@@ -382,17 +451,57 @@ private fun SpriteImage(sprite: ChatViewModel.SpriteView) {
     )
 }
 
-// 聊天页设置：暂时只有全局 BGM 音量；拖动实时试听，松手才落盘。
+// 摄像头全屏时的 VN 场景缩略小窗：背景 Crop 铺底 + 立绘 Fit 叠加，与主舞台同构、共享 Coil 缓存。
+@Composable
+private fun SceneMiniWindow(
+    background: File?,
+    sprite: ChatViewModel.SpriteView?,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .size(width = 96.dp, height = 128.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)),
+    ) {
+        background?.let { file ->
+            AsyncImage(
+                model = rememberImageRequest(file),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        sprite?.imageFile?.let { file ->
+            AsyncImage(
+                model = rememberImageRequest(file),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (sprite.dimmed) 0.4f else 1f),
+            )
+        }
+    }
+}
+
+// 聊天页设置：全局 BGM 音量拖动实时试听；视频会话追加阈值与冷却滑条，均松手落盘。
 @Composable
 private fun ChatSettingsSheetContent(
+    videoChat: Boolean,
     onPreviewVolume: (Float) -> Unit,
     onVolumeSettled: (Float) -> Unit,
+    onCooldownSettled: (Int) -> Unit,
+    onThresholdSettled: (Float) -> Unit,
 ) {
     // 音量流只在弹层内收集，落盘变化不触发整屏重组。
     val container = LocalAppContainer.current
     val bgmVolume by container.settingsRepository.bgmVolume.collectAsStateWithLifecycle()
     // 拖动期间的本地值；松手后回到 DataStore 值。
     var draggingVolume by remember { mutableStateOf<Float?>(null) }
+    var draggingThreshold by remember { mutableStateOf<Float?>(null) }
+    // 冷却滑条为离散档位下标；松手后回到 DataStore 值对应档。
+    var draggingCooldownIndex by remember { mutableStateOf<Float?>(null) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -434,7 +543,117 @@ private fun ChatSettingsSheetContent(
                 draggingVolume = null
             },
         )
+        if (videoChat) {
+            Spacer(Modifier.height(8.dp))
+            CameraThresholdRow(
+                draggingValue = draggingThreshold,
+                onValueChange = { draggingThreshold = it },
+                onValueChangeFinished = {
+                    draggingThreshold?.let(onThresholdSettled)
+                    draggingThreshold = null
+                },
+            )
+            CameraCooldownRow(
+                draggingIndex = draggingCooldownIndex,
+                onIndexChange = { draggingCooldownIndex = it },
+                onValueChangeFinished = {
+                    draggingCooldownIndex?.let { onCooldownSettled(cooldownIndexToSeconds(it.roundToInt())) }
+                    draggingCooldownIndex = null
+                },
+            )
+        }
     }
+}
+
+// 画面变化阈值：10%–70% 步进 5%，越高越不灵敏。
+@Composable
+private fun CameraThresholdRow(
+    draggingValue: Float?,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+) {
+    val container = LocalAppContainer.current
+    val threshold by container.settingsRepository.cameraChangeThreshold.collectAsStateWithLifecycle()
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.chat_settings_camera_threshold),
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            stringResource(
+                R.string.chat_settings_camera_threshold_percent_format,
+                (((draggingValue ?: threshold)) * 100).roundToInt(),
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Slider(
+        value = draggingValue ?: threshold,
+        onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
+        valueRange = 0.10f..0.70f,
+        steps = 11,
+    )
+}
+
+// 画面变化冷却：10–120s 步进 5s（下标 0..22 对应 10+5*i），最右档 23 为关闭（存储值 0）。
+@Composable
+private fun CameraCooldownRow(
+    draggingIndex: Float?,
+    onIndexChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+) {
+    val container = LocalAppContainer.current
+    val cooldownSeconds by container.settingsRepository.cameraCooldownSeconds.collectAsStateWithLifecycle()
+    val settledIndex = secondsToCooldownIndex(cooldownSeconds)
+    val currentIndex = draggingIndex?.roundToInt() ?: settledIndex
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.chat_settings_camera_cooldown),
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            if (currentIndex == COOLDOWN_OFF_INDEX) {
+                stringResource(R.string.chat_settings_camera_cooldown_off)
+            } else {
+                stringResource(
+                    R.string.chat_settings_camera_cooldown_seconds_format,
+                    cooldownIndexToSeconds(currentIndex),
+                )
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Slider(
+        value = (draggingIndex ?: settledIndex.toFloat()),
+        onValueChange = onIndexChange,
+        onValueChangeFinished = onValueChangeFinished,
+        valueRange = 0f..COOLDOWN_OFF_INDEX.toFloat(),
+        steps = COOLDOWN_OFF_INDEX - 1,
+    )
+}
+
+// 冷却档位换算：23=关闭（0 秒），其余 10+5*i。
+private const val COOLDOWN_OFF_INDEX = 23
+
+private fun cooldownIndexToSeconds(index: Int): Int =
+    if (index >= COOLDOWN_OFF_INDEX) 0 else 10 + index * 5
+
+private fun secondsToCooldownIndex(seconds: Int): Int = when {
+    seconds == 0 -> COOLDOWN_OFF_INDEX
+    seconds <= 10 -> 0
+    seconds >= 120 -> COOLDOWN_OFF_INDEX - 1
+    else -> (seconds - 10) / 5
 }
 
 // 生成中显示停止条；停止后输入栏常驻，发送即丢弃未播放队列。
@@ -920,15 +1139,18 @@ private fun RecordEntryItem(entry: SessionEntry, userLabel: String, onRewind: ()
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(
-                onClick = onRewind,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.height(30.dp),
-            ) {
-                Text(
-                    stringResource(R.string.record_rewind),
-                    style = MaterialTheme.typography.labelMedium,
-                )
+            // 摄像头帧消息无文字可回填，不给回溯。
+            if (entry.image == null) {
+                TextButton(
+                    onClick = onRewind,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier.height(30.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.record_rewind),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
             }
         }
 

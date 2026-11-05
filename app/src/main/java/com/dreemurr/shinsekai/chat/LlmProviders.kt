@@ -5,9 +5,13 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -90,12 +94,16 @@ private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)
 
 private fun JsonArray.objs(): List<JsonObject> = mapNotNull { it as? JsonObject }
 
-// 连续同角色合并（Anthropic 硬性要求交替，Google 防御性处理）。
+// 连续同角色合并（Anthropic 硬性要求交替，Google 防御性处理）；图像字段随合并保留。
 private fun mergeConsecutiveRoles(items: List<InputItem>): List<InputItem> = buildList {
     for (item in items) {
         val last = lastOrNull()
         if (last != null && last.role == item.role) {
-            this[size - 1] = last.copy(content = last.content + "\n\n" + item.content)
+            this[size - 1] = last.copy(
+                content = last.content + "\n\n" + item.content,
+                imagePath = last.imagePath ?: item.imagePath,
+                imageBase64 = last.imageBase64 ?: item.imageBase64,
+            )
         } else {
             add(item)
         }
@@ -112,23 +120,102 @@ private fun systemText(history: List<InputItem>): String? = history
 private fun parseModelIds(body: String): List<String> =
     parseObj(body)?.arr("data")?.objs()?.mapNotNull { it.str("id") }?.sorted() ?: emptyList()
 
+// ---- 跨提供商的图像消息序列化：纯文本保持字符串 content（与旧格式一致），带图用各家 content 数组；帧固定 JPEG ----
+private const val IMAGE_MIME = "image/jpeg"
+
+private fun imageDataUrl(base64: String) = "data:$IMAGE_MIME;base64,$base64"
+
+// OpenAI Responses：input_item.content 数组，input_text + input_image。
+private fun responsesContent(item: InputItem): JsonElement = if (item.imageBase64 == null) {
+    JsonPrimitive(item.content)
+} else {
+    buildJsonArray {
+        add(
+            buildJsonObject {
+                put("type", "input_text")
+                put("text", item.content)
+            },
+        )
+        add(
+            buildJsonObject {
+                put("type", "input_image")
+                put("image_url", imageDataUrl(item.imageBase64))
+            },
+        )
+    }
+}
+
+// OpenAI Chat Completions：content 数组，text + image_url。
+private fun chatCompletionsContent(item: InputItem): JsonElement = if (item.imageBase64 == null) {
+    JsonPrimitive(item.content)
+} else {
+    buildJsonArray {
+        add(
+            buildJsonObject {
+                put("type", "text")
+                put("text", item.content)
+            },
+        )
+        add(
+            buildJsonObject {
+                put("type", "image_url")
+                put("image_url", buildJsonObject { put("url", imageDataUrl(item.imageBase64)) })
+            },
+        )
+    }
+}
+
+// Anthropic：content 数组，text + image(base64 source)。
+private fun anthropicContent(item: InputItem): JsonElement = if (item.imageBase64 == null) {
+    JsonPrimitive(item.content)
+} else {
+    buildJsonArray {
+        add(
+            buildJsonObject {
+                put("type", "text")
+                put("text", item.content)
+            },
+        )
+        add(
+            buildJsonObject {
+                put("type", "image")
+                put(
+                    "source",
+                    buildJsonObject {
+                        put("type", "base64")
+                        put("media_type", IMAGE_MIME)
+                        put("data", item.imageBase64)
+                    },
+                )
+            },
+        )
+    }
+}
+
 // ---- OpenAI Responses ----
 
 // none 也显式发送，关闭服务端默认思考。
 @Serializable
 private data class Reasoning(val effort: ReasoningEffort)
 
-// system 提示词快照随历史进入 input。
+// system 提示词快照随历史进入 input；content 兼容纯文本与图文数组两种形态。
 @Serializable
 private data class ResponsesRequest(
     val model: String,
-    val input: List<InputItem>,
+    val input: List<ResponsesInput>,
     val stream: Boolean = true,
     val reasoning: Reasoning? = Reasoning(ReasoningEffort.none),
     val text: TextConfig = TextConfig(),
     // 固定 0.7 对齐桌面版默认采样温度，避免服务端缺省 1.0 造成风格漂移；encodeDefaults 保证显式发送。
     val temperature: Double = 0.7,
 ) {
+    @Serializable
+    data class ResponsesInput(
+        val type: String = "message",
+        val role: Role,
+        val content: JsonElement,
+    )
+
     @Serializable
     data class TextConfig(val format: Format = Format()) {
         @Serializable
@@ -166,7 +253,13 @@ internal object ResponsesSpec : ProviderSpec {
         history: List<InputItem>,
         effort: ReasoningEffort,
     ): RequestBody = json.encodeToString(
-        ResponsesRequest(model = model, input = history, reasoning = Reasoning(effort)),
+        ResponsesRequest(
+            model = model,
+            input = history.map {
+                ResponsesRequest.ResponsesInput(role = it.role, content = responsesContent(it))
+            },
+            reasoning = Reasoning(effort),
+        ),
     ).toRequestBody(jsonMediaType)
 
     override fun buildTestBody(json: Json, model: String): RequestBody = json.encodeToString(
@@ -232,8 +325,9 @@ private data class ChatCompletionsRequest(
     @SerialName("response_format") val responseFormat: ResponseFormat = ResponseFormat(),
     val temperature: Double = 0.7,
 ) {
+    // content 兼容纯文本（JsonPrimitive）与图文数组两种形态。
     @Serializable
-    data class Message(val role: Role, val content: String)
+    data class Message(val role: Role, val content: JsonElement)
 
     @Serializable
     data class ResponseFormat(val type: String = "json_object")
@@ -270,7 +364,9 @@ internal object ChatCompletionsSpec : ProviderSpec {
     ): RequestBody {
         val request = ChatCompletionsRequest(
             model = model,
-            messages = history.map { ChatCompletionsRequest.Message(role = it.role, content = it.content) },
+            messages = history.map {
+                ChatCompletionsRequest.Message(role = it.role, content = chatCompletionsContent(it))
+            },
             reasoningEffort = if (effort == ReasoningEffort.none) null else effort.name,
         )
         return json.encodeToString(request).toRequestBody(jsonMediaType)
@@ -279,7 +375,9 @@ internal object ChatCompletionsSpec : ProviderSpec {
     override fun buildTestBody(json: Json, model: String): RequestBody = json.encodeToString(
         ChatCompletionsTestRequest(
             model = model,
-            messages = listOf(ChatCompletionsRequest.Message(role = Role.user, content = TEST_PROMPT)),
+            messages = listOf(
+                ChatCompletionsRequest.Message(role = Role.user, content = JsonPrimitive(TEST_PROMPT)),
+            ),
         ),
     ).toRequestBody(jsonMediaType)
 
@@ -292,8 +390,8 @@ internal object ChatCompletionsSpec : ProviderSpec {
         ChatCompletionsSummaryRequest(
             model = model,
             messages = listOf(
-                ChatCompletionsRequest.Message(role = Role.system, content = system),
-                ChatCompletionsRequest.Message(role = Role.user, content = user),
+                ChatCompletionsRequest.Message(role = Role.system, content = JsonPrimitive(system)),
+                ChatCompletionsRequest.Message(role = Role.user, content = JsonPrimitive(user)),
             ),
         ),
     ).toRequestBody(jsonMediaType)
@@ -330,8 +428,9 @@ private data class AnthropicRequest(
     val temperature: Double? = 0.7,
     val thinking: Thinking? = null,
 ) {
+    // content 兼容纯文本（JsonPrimitive）与图文数组两种形态。
     @Serializable
-    data class Message(val role: Role, val content: String)
+    data class Message(val role: Role, val content: JsonElement)
 
     @Serializable
     data class Thinking(
@@ -378,7 +477,7 @@ internal object AnthropicSpec : ProviderSpec {
             model = model,
             system = systemText(history),
             messages = mergeConsecutiveRoles(history.filter { it.role != Role.system })
-                .map { AnthropicRequest.Message(role = it.role, content = it.content) },
+                .map { AnthropicRequest.Message(role = it.role, content = anthropicContent(it)) },
             temperature = if (thinking == null) 0.7 else null,
             thinking = thinking,
         )
@@ -388,7 +487,7 @@ internal object AnthropicSpec : ProviderSpec {
     override fun buildTestBody(json: Json, model: String): RequestBody = json.encodeToString(
         AnthropicTestRequest(
             model = model,
-            messages = listOf(AnthropicRequest.Message(role = Role.user, content = TEST_PROMPT)),
+            messages = listOf(AnthropicRequest.Message(role = Role.user, content = JsonPrimitive(TEST_PROMPT))),
         ),
     ).toRequestBody(jsonMediaType)
 
@@ -401,7 +500,7 @@ internal object AnthropicSpec : ProviderSpec {
         AnthropicSummaryRequest(
             model = model,
             system = system,
-            messages = listOf(AnthropicRequest.Message(role = Role.user, content = user)),
+            messages = listOf(AnthropicRequest.Message(role = Role.user, content = JsonPrimitive(user))),
         ),
     ).toRequestBody(jsonMediaType)
 
@@ -451,11 +550,20 @@ private data class GoogleRequest(
     val systemInstruction: Content? = null,
     val generationConfig: GenerationConfig = GenerationConfig(),
 ) {
-    // role 仅 user/model；system 走 systemInstruction。
+    // role 仅 user/model；system 走 systemInstruction。Part 兼容纯文本与内联图像。
     @Serializable
     data class Content(val role: String? = null, val parts: List<Part>) {
         @Serializable
-        data class Part(val text: String)
+        data class Part(
+            val text: String? = null,
+            @SerialName("inline_data") val inlineData: InlineData? = null,
+        )
+
+        @Serializable
+        data class InlineData(
+            @SerialName("mime_type") val mimeType: String,
+            val data: String,
+        )
     }
 
     @Serializable
@@ -506,10 +614,20 @@ internal object GoogleSpec : ProviderSpec {
         history: List<InputItem>,
         effort: ReasoningEffort,
     ): RequestBody {
-        val contents = mergeConsecutiveRoles(history.filter { it.role != Role.system }).map {
+        val contents = mergeConsecutiveRoles(history.filter { it.role != Role.system }).map { item ->
+            val parts = buildList {
+                add(GoogleRequest.Content.Part(text = item.content))
+                item.imageBase64?.let { base64 ->
+                    add(
+                        GoogleRequest.Content.Part(
+                            inlineData = GoogleRequest.Content.InlineData(IMAGE_MIME, base64),
+                        ),
+                    )
+                }
+            }
             GoogleRequest.Content(
-                role = if (it.role == Role.assistant) "model" else "user",
-                parts = listOf(GoogleRequest.Content.Part(it.content)),
+                role = if (item.role == Role.assistant) "model" else "user",
+                parts = parts,
             )
         }
         // -1 表示动态思考（模型自定预算）。

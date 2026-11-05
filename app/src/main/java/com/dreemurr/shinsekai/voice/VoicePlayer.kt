@@ -8,8 +8,15 @@ import java.io.File
 class VoicePlayer {
     private var player: MediaPlayer? = null
 
-    fun play(file: File, speed: Float, volume: Float) {
+    // onCompletion 在完成/出错/启动失败时触发一次（completeOnce 防重），供视频会话自动推进。
+    fun play(file: File, speed: Float, volume: Float, onCompletion: (() -> Unit)? = null) {
         stop()
+        var completed = false
+        fun completeOnce() {
+            if (completed) return
+            completed = true
+            onCompletion?.invoke()
+        }
         try {
             val mp = MediaPlayer()
             player = mp
@@ -27,14 +34,20 @@ class VoicePlayer {
                     p.start()
                 } catch (e: Exception) {
                     e.printStackTrace()
+                    completeOnce()
                 }
             }
-            // 消费错误，避免系统弹窗。
-            mp.setOnErrorListener { _, _, _ -> true }
+            mp.setOnCompletionListener { completeOnce() }
+            // 消费错误，避免系统弹窗；错误同样触发完成信号，自动播放不悬挂。
+            mp.setOnErrorListener { _, _, _ ->
+                completeOnce()
+                true
+            }
             mp.prepareAsync()
         } catch (e: Exception) {
             e.printStackTrace()
             stop() // 启动失败也释放实例。
+            completeOnce()
         }
     }
 

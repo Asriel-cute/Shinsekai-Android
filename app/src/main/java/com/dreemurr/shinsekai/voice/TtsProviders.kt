@@ -42,9 +42,7 @@ private fun JsonObject.long(key: String): Long? =
 private fun JsonObject.int(key: String): Int? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
 
-// ---- 阿里百炼 voice-enrollment ----
-// 端点：{base}/services/audio/tts/customization，action 区分增查删。
-
+// ---- 阿里百炼 voice-enrollment：{base}/services/audio/tts/customization，action 区分增查删 ----
 @Serializable
 private data class AliyunEnrollmentRequest(
     val model: String, // 固定 voice-enrollment

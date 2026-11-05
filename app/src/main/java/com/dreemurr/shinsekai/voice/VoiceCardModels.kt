@@ -14,8 +14,7 @@ enum class TtsProvider(val defaultBaseUrl: String) {
 fun ttsProviderOf(name: String): TtsProvider? =
     TtsProvider.entries.firstOrNull { it.name == name }
 
-// 声音卡片语言：新建会话时决定翻译目标，复刻与合成也使用。
-// 空串表示自动。
+// 声音卡片语言：新建会话定翻译目标，复刻与合成同用；空串表示自动。
 object VoiceLanguages {
     const val ZH = "zh"
     const val JA = "ja"

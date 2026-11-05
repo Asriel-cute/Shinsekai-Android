@@ -20,7 +20,7 @@ import java.util.UUID
 
 // 单写 Mutex 保护；写盘成功后才更新内存状态。
 class SessionRepository(
-    rootDir: File,
+    private val rootDir: File,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val store = SessionStore(rootDir)
@@ -37,7 +37,7 @@ class SessionRepository(
         }
     }
 
-    // 现场生成提示词快照，作为首条 system 消息落盘。
+    // 现场生成提示词快照，作为首条 system 消息落盘；名称留空按角色自动命名。
     suspend fun create(
         characters: List<Character>,
         scenario: String,
@@ -45,6 +45,8 @@ class SessionRepository(
         cloudTtsEnabled: Boolean = true,
         playerCharacterId: String? = null,
         background: Background? = null,
+        title: String? = null,
+        chatType: ChatType = ChatType.TEXT,
     ): ChatSession = mutex.withLock {
         withContext(io) {
             val now = System.currentTimeMillis()
@@ -53,20 +55,23 @@ class SessionRepository(
             val ids = characters.map { it.id }
             val idSet = ids.toSet()
             val voiceSnapshot = voiceLanguages.filterKeys { it in idSet }
-            val playerId = normalizePlayerId(playerCharacterId, characters)
-            val system = TemplateGenerator.generate(characters, voiceSnapshot, playerId, background)
+            val playerId = normalizePlayerId(playerCharacterId, characters, chatType)
+            val system = TemplateGenerator.generate(
+                characters,
+                voiceSnapshot,
+                playerId,
+                background,
+                videoChat = chatType == ChatType.VIDEO,
+            )
             val session = ChatSession(
                 id = UUID.randomUUID().toString(),
-                title = if (names.size <= 2) {
-                    names.joinToString("、")
-                } else {
-                    names.take(2).joinToString("、") + " 等 ${names.size} 人"
-                },
+                title = title?.trim()?.takeIf { it.isNotEmpty() } ?: autoTitle(names),
                 characterIds = ids,
                 playerCharacterId = playerId,
                 voiceLanguages = voiceSnapshot,
                 cloudTtsEnabled = cloudTtsEnabled,
                 backgroundId = background?.id,
+                chatType = chatType,
                 scenario = scenarioText,
                 history = listOf(
                     SessionEntry(
@@ -83,7 +88,7 @@ class SessionRepository(
         }
     }
 
-    // 会话设置页保存：按当前角色/场景/背景重生成 system 快照，其余记录原样保留。
+    // 会话设置页保存：按当前角色/场景/背景重生成 system 快照，其余记录原样保留；名称留空保持原标题。
     suspend fun updateSetup(
         id: String,
         characters: List<Character>,
@@ -92,14 +97,22 @@ class SessionRepository(
         cloudTtsEnabled: Boolean = true,
         playerCharacterId: String? = null,
         background: Background? = null,
+        title: String? = null,
+        chatType: ChatType = ChatType.TEXT,
     ): ChatSession? = update(id) { session ->
         val ids = characters.map { it.id }
         val idSet = ids.toSet()
         val voiceSnapshot = voiceLanguages.filterKeys { it in idSet }
-        val playerId = normalizePlayerId(playerCharacterId, characters)
+        val playerId = normalizePlayerId(playerCharacterId, characters, chatType)
         val system = TemplateGenerator.composeForLlm(
             scenario.trim(),
-            TemplateGenerator.generate(characters, voiceSnapshot, playerId, background),
+            TemplateGenerator.generate(
+                characters,
+                voiceSnapshot,
+                playerId,
+                background,
+                videoChat = chatType == ChatType.VIDEO,
+            ),
         )
         val history = if (session.history.firstOrNull()?.role == Role.system) {
             session.history.mapIndexed { index, entry ->
@@ -109,11 +122,13 @@ class SessionRepository(
             listOf(SessionEntry(role = Role.system, content = system)) + session.history
         }
         session.copy(
+            title = title?.trim()?.takeIf { it.isNotEmpty() } ?: session.title,
             characterIds = ids,
             playerCharacterId = playerId,
             voiceLanguages = voiceSnapshot,
             cloudTtsEnabled = cloudTtsEnabled,
             backgroundId = background?.id,
+            chatType = chatType,
             scenario = scenario.trim(),
             history = history,
         )
@@ -150,7 +165,11 @@ class SessionRepository(
     suspend fun delete(id: String): Boolean = mutex.withLock {
         withContext(io) {
             val deleted = store.delete(id)
-            if (deleted) _sessions.value = _sessions.value.filterNot { it.id == id }
+            if (deleted) {
+                // 连带清理摄像头帧目录；失败仅记录，不影响会话删除。
+                camDir(id).deleteRecursively()
+                _sessions.value = _sessions.value.filterNot { it.id == id }
+            }
             deleted
         }
     }
@@ -172,19 +191,48 @@ class SessionRepository(
         }
     }
 
-    // 保留 system 顺序，排除未完成条目；assistant 中的 SCENE/bgm 展示条目不回传给 LLM。
-    fun buildInput(session: ChatSession): List<InputItem> =
-        session.history.mapNotNull { entry ->
-            if (!entry.complete) return@mapNotNull null
+    // 摄像头帧落盘 sessions/cam/{sessionId}/{时间戳}.jpg，只保留最近一张并返回文件名；更早 image 条目构建请求时降级纯文字。
+    suspend fun saveCameraImage(sessionId: String, bytes: ByteArray): String = mutex.withLock {
+        withContext(io) {
+            val dir = camDir(sessionId)
+            dir.mkdirs()
+            val name = "${System.currentTimeMillis()}.jpg"
+            val tmp = File(dir, "$name.part")
+            val target = File(dir, name)
+            try {
+                tmp.writeBytes(bytes)
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+                dir.listFiles()?.forEach { if (it != target) it.delete() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                tmp.delete()
+                target.delete()
+            }
+            name
+        }
+    }
+
+    // 排除未完成条目与 SCENE/bgm/CAMERA 展示条目；仅最近一条带 image 的条目附帧路径，缺文件由 resolveImage 兜底降级。
+    fun buildInput(session: ChatSession): List<InputItem> {
+        val lastImageIndex = session.history.indexOfLast { it.complete && it.image != null }
+        return session.history.mapIndexedNotNull { index, entry ->
+            if (!entry.complete) return@mapIndexedNotNull null
             val content =
                 if (entry.role == Role.assistant) stripPresentationDialogs(entry.content) else entry.content
-            if (content.isEmpty()) null else InputItem(role = entry.role, content = content)
+            if (content.isEmpty()) return@mapIndexedNotNull null
+            val imagePath = entry.image?.takeIf { index == lastImageIndex }
+                ?.let { name -> File(camDir(session.id), name).absolutePath }
+            InputItem(role = entry.role, content = content, imagePath = imagePath)
         }
+    }
 
     // 过滤后全部为展示条目时返回空串；无展示条目时保持原文，避免无谓重编码。
     private fun stripPresentationDialogs(content: String): String {
         if (!content.contains("SCENE") && !content.contains("bgm", ignoreCase = true) &&
-            !content.contains("场景")
+            !content.contains("场景") && !content.contains("CAMERA") && !content.contains("摄像头")
         ) {
             return content
         }
@@ -195,9 +243,25 @@ class SessionRepository(
         return DialogJsonParser.encode(kept)
     }
 
-    // 主控至少要有对手戏角色且在选角内；失效按未设置处理。
-    private fun normalizePlayerId(playerCharacterId: String?, characters: List<Character>): String? =
-        playerCharacterId?.takeIf { id -> characters.size >= 2 && characters.any { it.id == id } }
+    // 主控至少要有对手戏角色且在选角内；失效按未设置处理。视频会话与主控规则互斥，固定为空。
+    private fun normalizePlayerId(
+        playerCharacterId: String?,
+        characters: List<Character>,
+        chatType: ChatType,
+    ): String? = playerCharacterId
+        ?.takeIf { chatType == ChatType.TEXT }
+        ?.takeIf { id -> characters.size >= 2 && characters.any { it.id == id } }
+
+    // 未命名会话按出场角色自动命名。
+    private fun autoTitle(names: List<String>): String =
+        if (names.size <= 2) {
+            names.joinToString("、")
+        } else {
+            names.take(2).joinToString("、") + " 等 ${names.size} 人"
+        }
+
+    // 摄像头帧目录与 sessions/{id}.json 同级，不干扰 *.json 扫描。
+    private fun camDir(sessionId: String) = File(rootDir, "cam/$sessionId")
 
     private suspend fun update(
         id: String,

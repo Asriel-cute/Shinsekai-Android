@@ -94,8 +94,7 @@ private fun AppRoot() {
     )
     val navigator = remember { AppNavigator(state) }
 
-    // 新手引导状态：null 表示 DataStore 尚未读出；ready 后只读一次仓库现值判断老用户，
-    // 不在根节点订阅会话列表，避免流式对话期间整树重组。
+    // 新手引导状态：null=DataStore 未读出；ready 后只读一次现值判断老用户，不订阅会话列表避免整树重组。
     val onboardingCompleted by container.settingsRepository.onboardingCompleted.collectAsStateWithLifecycle()
     val ready by container.ready.collectAsStateWithLifecycle()
     val hasExistingData = remember(ready) {

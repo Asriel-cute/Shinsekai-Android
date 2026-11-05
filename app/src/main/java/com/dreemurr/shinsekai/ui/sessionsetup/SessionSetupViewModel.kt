@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dreemurr.shinsekai.di.AppContainer
 import com.dreemurr.shinsekai.session.ChatSession
+import com.dreemurr.shinsekai.session.ChatType
 import com.dreemurr.shinsekai.voice.VoiceLanguages
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +41,8 @@ class SessionSetupViewModel(
         cloudTtsEnabled: Boolean,
         playerCharacterId: String?,
         backgroundId: String?,
+        title: String,
+        chatType: ChatType,
         onSaved: (String) -> Unit,
     ) {
         viewModelScope.launch {
@@ -76,6 +79,8 @@ class SessionSetupViewModel(
                     cloudTtsEnabled = cloudTtsEnabled,
                     playerCharacterId = playerCharacterId,
                     background = background,
+                    title = title,
+                    chatType = chatType,
                 ).id
             } else {
                 container.sessionRepository.updateSetup(
@@ -86,6 +91,8 @@ class SessionSetupViewModel(
                     cloudTtsEnabled = cloudTtsEnabled,
                     playerCharacterId = playerCharacterId,
                     background = background,
+                    title = title,
+                    chatType = chatType,
                 )?.id ?: return@launch
             }
             onSaved(id)

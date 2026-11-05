@@ -14,8 +14,7 @@ import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import java.io.File
 
-// 角色与声音卡片的绑定关系：filesDir/voice_bindings.json 单文件 Map，临时文件原子替换。
-// 角色管道只管导入，绑定关系由本仓库独立维护；同名覆盖重导会保留角色 id，绑定不丢。
+// 角色与声音卡片绑定：voice_bindings.json 单文件 Map 原子替换；同名重导保留 id 不丢绑定。
 class VoiceBindings(
     private val file: File,
     private val io: CoroutineDispatcher = Dispatchers.IO,
