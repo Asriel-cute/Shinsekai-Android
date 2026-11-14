@@ -75,11 +75,9 @@ import com.dreemurr.shinsekai.chat.ProviderConfig
 import com.dreemurr.shinsekai.chat.ReasoningEffort
 import com.dreemurr.shinsekai.di.LocalAppContainer
 import com.dreemurr.shinsekai.settings.ThemeMode
+import com.dreemurr.shinsekai.update.UpdateCheckResult
 import kotlinx.coroutines.launch
 import java.util.Locale
-
-// Releases 页面；「检查更新」不请求网络，直接跳转由浏览器展示最新版本。
-private const val RELEASES_URL = "https://github.com/Asriel-cute/Shinsekai-Android/releases"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,12 +92,15 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
     val modelsState by vm.modelsState.collectAsStateWithLifecycle()
     val testState by vm.testState.collectAsStateWithLifecycle()
     val themeMode by vm.themeMode.collectAsStateWithLifecycle()
+    val updateState by vm.updateState.collectAsStateWithLifecycle()
 
     // 只初始化一次；已就绪时首帧直接使用仓库数据，避免空表单闪动与浮动标签动画掉帧。
     var form by remember { mutableStateOf(saved) }
     var initialized by remember { mutableStateOf(saved != AllProviderSettings()) }
     var showKey by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
+    // 检查到新版本后展示下载弹窗；null 表示无弹窗。
+    var pendingUpdate by remember { mutableStateOf<UpdateCheckResult.Latest?>(null) }
 
     LaunchedEffect(saved) {
         // 跳过仓库尚未加载时的默认占位值。
@@ -123,6 +124,8 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
     val failedMsg = stringResource(R.string.settings_save_failed)
     val testSuccessFormat = stringResource(R.string.settings_test_success_format)
     val openLinkFailedMsg = stringResource(R.string.err_open_link)
+    val updateUpToDateMsg = stringResource(R.string.update_up_to_date)
+    val updateFailedFormat = stringResource(R.string.update_check_failed_format)
     val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize()) {
@@ -336,19 +339,43 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
                     Text(stringResource(R.string.settings_show_onboarding))
                 }
 
+                // 检查更新：抓下载页手动维护区比对版本；请求中禁用并显示进度。
                 OutlinedButton(
                     onClick = {
-                        runCatching { uriHandler.openUri(RELEASES_URL) }
-                            .onFailure {
-                                Toast.makeText(context, openLinkFailedMsg, Toast.LENGTH_SHORT).show()
+                        scope.launch {
+                            when (val result = vm.checkUpdate()) {
+                                is UpdateCheckResult.Latest -> pendingUpdate = result
+                                is UpdateCheckResult.UpToDate ->
+                                    Toast.makeText(context, updateUpToDateMsg, Toast.LENGTH_SHORT).show()
+
+                                is UpdateCheckResult.Failure ->
+                                    Toast.makeText(
+                                        context,
+                                        String.format(Locale.ROOT, updateFailedFormat, result.message),
+                                        Toast.LENGTH_LONG,
+                                    ).show()
                             }
+                        }
                     },
+                    enabled = !updateState.running,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(44.dp),
                 ) {
-                    Text(stringResource(R.string.action_check_update))
+                    if (updateState.running) {
+                        CircularProgressIndicator(
+                            Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(
+                        stringResource(
+                            if (updateState.running) R.string.update_checking
+                            else R.string.action_check_update,
+                        ),
+                    )
                 }
             }
 
@@ -367,6 +394,32 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
                 updateConfig(activeProvider) { it.copy(modelName = name) }
                 showModelPicker = false
                 vm.dismissModels()
+            },
+        )
+    }
+
+    // 发现新版本：仅展示版本号，「前往下载」跳服务器 APK 直链由浏览器下载。
+    pendingUpdate?.let { update ->
+        AlertDialog(
+            onDismissRequest = { pendingUpdate = null },
+            title = { Text(stringResource(R.string.update_found_format, update.versionName)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        runCatching { uriHandler.openUri(update.downloadUrl) }
+                            .onFailure {
+                                Toast.makeText(context, openLinkFailedMsg, Toast.LENGTH_SHORT).show()
+                            }
+                        pendingUpdate = null
+                    },
+                ) {
+                    Text(stringResource(R.string.update_download))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUpdate = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
             },
         )
     }

@@ -1,7 +1,7 @@
 package com.dreemurr.shinsekai.background
 
 import com.dreemurr.shinsekai.character.Conflict
-import com.dreemurr.shinsekai.character.ImportError
+import com.dreemurr.shinsekai.core.ImportError
 import kotlinx.serialization.Serializable
 
 // 背景包元数据；sprites/bgm 顺序对应 1 基编号、缺素材保留 null；bgTags/bgmTags 为逐行原文直接进提示词。

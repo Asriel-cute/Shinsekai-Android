@@ -7,8 +7,8 @@ import com.dreemurr.shinsekai.R
 import com.dreemurr.shinsekai.background.BackgroundImportOutcome
 import com.dreemurr.shinsekai.character.Conflict
 import com.dreemurr.shinsekai.character.ConflictDecision
-import com.dreemurr.shinsekai.character.ImportError
 import com.dreemurr.shinsekai.character.ImportOutcome
+import com.dreemurr.shinsekai.core.ImportError
 import com.dreemurr.shinsekai.core.queryDisplayName
 import com.dreemurr.shinsekai.di.AppContainer
 import kotlinx.coroutines.Dispatchers

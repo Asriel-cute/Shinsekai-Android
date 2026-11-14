@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.character
 
+import com.dreemurr.shinsekai.core.ImportError
 import com.dreemurr.shinsekai.core.appJson
 import com.dreemurr.shinsekai.core.cleanFileName
 import com.dreemurr.shinsekai.core.uniqueAssetName

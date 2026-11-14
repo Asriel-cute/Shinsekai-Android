@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.character
 
+import com.dreemurr.shinsekai.core.ImportError
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow

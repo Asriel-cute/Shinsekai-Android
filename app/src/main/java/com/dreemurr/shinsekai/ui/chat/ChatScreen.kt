@@ -94,7 +94,7 @@ import com.dreemurr.shinsekai.di.LocalAppContainer
 import com.dreemurr.shinsekai.session.SessionEntry
 import com.dreemurr.shinsekai.ui.chat.ChatViewModel.LineKind
 import com.dreemurr.shinsekai.ui.chat.ChatViewModel.Phase
-import com.dreemurr.shinsekai.ui.common.parseHexColor
+import com.dreemurr.shinsekai.ui.common.parseCssColor
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 import java.util.Locale
@@ -807,7 +807,7 @@ private fun StopBar(onStop: () -> Unit) {
 @Composable
 private fun NameBadge(line: ChatViewModel.DisplayLine) {
     val speakerColor = remember(line.speakerColorHex) {
-        parseHexColor(line.speakerColorHex)
+        parseCssColor(line.speakerColorHex)
     }
     val badgeBg = when (line.kind) {
         LineKind.Character -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f)

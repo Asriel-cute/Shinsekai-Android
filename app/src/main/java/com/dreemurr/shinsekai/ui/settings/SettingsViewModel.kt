@@ -10,6 +10,7 @@ import com.dreemurr.shinsekai.chat.ModelsResult
 import com.dreemurr.shinsekai.chat.ProviderConfig
 import com.dreemurr.shinsekai.di.AppContainer
 import com.dreemurr.shinsekai.settings.ThemeMode
+import com.dreemurr.shinsekai.update.UpdateCheckResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,11 @@ data class TestUiState(
     val running: Boolean = false,
 )
 
+// 检查更新运行状态（结果经返回值交给 UI 弹窗或 Toast）。
+data class UpdateUiState(
+    val running: Boolean = false,
+)
+
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     val settings = container.settingsRepository.allSettings
@@ -38,6 +44,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _testState = MutableStateFlow(TestUiState())
     val testState: StateFlow<TestUiState> = _testState.asStateFlow()
+
+    private val _updateState = MutableStateFlow(UpdateUiState())
+    val updateState: StateFlow<UpdateUiState> = _updateState.asStateFlow()
 
     // 写盘完成后，UI 才提示已保存。
     suspend fun save(settings: AllProviderSettings) {
@@ -97,6 +106,16 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             return container.chatRepository.testConnection(settings)
         } finally {
             _testState.value = TestUiState()
+        }
+    }
+
+    // 抓下载页手动维护区检查新版本；结果以返回值交给 UI 弹窗或 Toast。
+    suspend fun checkUpdate(): UpdateCheckResult {
+        _updateState.value = UpdateUiState(running = true)
+        try {
+            return container.updateRepository.checkForUpdate()
+        } finally {
+            _updateState.value = UpdateUiState()
         }
     }
 }

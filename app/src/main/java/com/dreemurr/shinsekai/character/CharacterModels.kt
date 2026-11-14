@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.character
 
+import com.dreemurr.shinsekai.core.ImportError
 import kotlinx.serialization.Serializable
 
 // 角色元数据，不保留语音合成模型配置。
@@ -49,17 +50,6 @@ sealed interface ImportOutcome {
     ) : ImportOutcome
 
     data class Failed(val error: ImportError) : ImportOutcome
-}
-
-enum class ImportError {
-    NotAZip,
-    MissingYaml,
-    MalformedYaml,
-    EmptyPackage,
-    BrokenArchive,
-    // 进程重启后待决议会话失效，需重新导入。
-    SessionNotFound,
-    Io,
 }
 
 internal class CharacterPackageException(

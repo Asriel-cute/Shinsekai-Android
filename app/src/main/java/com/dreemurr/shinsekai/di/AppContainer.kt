@@ -7,6 +7,7 @@ import com.dreemurr.shinsekai.chat.ChatRepository
 import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.session.SessionRepository
 import com.dreemurr.shinsekai.settings.SettingsRepository
+import com.dreemurr.shinsekai.update.UpdateRepository
 import com.dreemurr.shinsekai.voice.TtsRepository
 import com.dreemurr.shinsekai.voice.BgmPlayer
 import com.dreemurr.shinsekai.voice.VoiceBindings
@@ -39,6 +40,7 @@ class AppContainer(context: Context) {
     val voiceCardRepository = VoiceCardRepository(File(appContext.filesDir, "voice_cards.json"))
     val voiceBindings = VoiceBindings(File(appContext.filesDir, "voice_bindings.json"))
     val ttsRepository = TtsRepository()
+    val updateRepository = UpdateRepository()
 
     /** 仅由 MainApplication 启动流程调用 */
     fun markReady() {

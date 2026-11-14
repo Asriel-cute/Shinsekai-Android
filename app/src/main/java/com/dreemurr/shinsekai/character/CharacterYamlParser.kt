@@ -5,6 +5,7 @@ import com.charleskorn.kaml.YamlException
 import com.charleskorn.kaml.YamlList
 import com.charleskorn.kaml.YamlMap
 import com.charleskorn.kaml.YamlScalar
+import com.dreemurr.shinsekai.core.ImportError
 import com.dreemurr.shinsekai.core.YamlRoot
 import com.dreemurr.shinsekai.core.float
 import com.dreemurr.shinsekai.core.node

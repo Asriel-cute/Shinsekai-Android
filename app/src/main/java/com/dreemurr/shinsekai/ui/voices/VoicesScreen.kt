@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,8 +53,12 @@ import com.dreemurr.shinsekai.ui.common.formatImportedAt
 import com.dreemurr.shinsekai.voice.TtsProvider
 import com.dreemurr.shinsekai.voice.VoiceCard
 import kotlinx.coroutines.launch
+import java.util.Locale
 
-// 语音 Tab 根页：角色声音卡片列表，右上角「克隆」「添加」。
+// 服务器语音包仓库页；「下载」不请求网络，直接跳浏览器展示。
+private const val VOICE_PACKS_URL = "https://dreemurr.com.cn/shinsekai/voices/"
+
+// 语音 Tab 根页：角色声音卡片列表，右上角「下载」「克隆」「添加」。
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoicesScreen(
@@ -70,6 +75,7 @@ fun VoicesScreen(
     val cards by vm.cards.collectAsStateWithLifecycle()
     val deleting by vm.deleting.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     var deleteTarget by remember { mutableStateOf<VoiceCard?>(null) }
 
@@ -81,7 +87,7 @@ fun VoicesScreen(
         scope.launch {
             val error = vm.delete(card, purge)
             // 云端删除失败不动本地，留待重试；结果经系统 Toast 提示（失败含原因用长时）。
-            val message = error?.let { cloudFailedFormat.format(it) } ?: deletedMsg
+            val message = error?.let { String.format(Locale.ROOT, cloudFailedFormat, it) } ?: deletedMsg
             val duration = if (error == null) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
             Toast.makeText(context, message, duration).show()
         }
@@ -92,6 +98,20 @@ fun VoicesScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.voices_title)) },
                 actions = {
+                    // 语音包仓库入口，与角色页「下载」同模式：跳浏览器，失败 Toast。
+                    TextButton(
+                        onClick = {
+                            runCatching { uriHandler.openUri(VOICE_PACKS_URL) }
+                                .onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        R.string.err_open_link,
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                        },
+                        enabled = !deleting,
+                    ) { Text(stringResource(R.string.action_download)) }
                     TextButton(onClick = onClone, enabled = !deleting) {
                         Text(stringResource(R.string.action_clone))
                     }

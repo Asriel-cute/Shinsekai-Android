@@ -2,7 +2,7 @@ package com.dreemurr.shinsekai.background
 
 import com.dreemurr.shinsekai.character.Conflict
 import com.dreemurr.shinsekai.character.ConflictDecision
-import com.dreemurr.shinsekai.character.ImportError
+import com.dreemurr.shinsekai.core.ImportError
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow

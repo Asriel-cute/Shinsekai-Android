@@ -1,6 +1,5 @@
 package com.dreemurr.shinsekai.core
 
-import com.dreemurr.shinsekai.character.ImportError
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
