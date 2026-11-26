@@ -45,7 +45,7 @@ class ContextCompressor(private val chatRepository: ChatRepository) {
                 entry.summary -> lines.add(entry.content)
                 entry.role == Role.user -> lines.add("用户：" + entry.content)
                 entry.role == Role.assistant -> {
-                    // SCENE/bgm/CAMERA 展示条目不进摘要，与 buildInput 过滤口径一致；过滤后为空则跳过。
+                    // 展示条目一律不进摘要（buildInput 只剥 CAMERA 与已关闭的 STAT/CHOICE，口径不同是有意为之）；过滤后为空则跳过。
                     val dialogs = DialogJsonParser.parseAll(entry.content)
                         .filterNot { presentationKind(it.name) != null }
                     for (dialog in dialogs) lines.add("${dialog.name}：${dialog.speech}")

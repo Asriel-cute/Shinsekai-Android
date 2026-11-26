@@ -56,7 +56,7 @@ class VoiceCardEditViewModel(
                 name = it.name,
                 provider = it.providerEnum ?: TtsProvider.ALIYUN,
                 baseUrl = it.baseUrl,
-                apiKey = repo.decryptKey(it),
+                apiKey = "",
                 model = it.model,
                 voiceId = it.voiceId,
                 lang = VoiceLanguages.normalize(it.lang) ?: VoiceLanguages.AUTO,
@@ -65,8 +65,25 @@ class VoiceCardEditViewModel(
     )
     val form: StateFlow<Form> = _form.asStateFlow()
 
+    // 编辑态 Key 异步回填完成前禁用保存/拉取音色，避免空 Key 覆写已存密文或空 Key 请求。
+    private val _keyLoaded = MutableStateFlow(existing == null)
+    val keyLoaded: StateFlow<Boolean> = _keyLoaded.asStateFlow()
+
     private val _voicesState = MutableStateFlow<VoicePickerState>(VoicePickerState.Idle)
     val voicesState: StateFlow<VoicePickerState> = _voicesState.asStateFlow()
+
+    init {
+        // 异步回填避免主线程构造 VM 时卡顿；用户已改动则不覆盖。
+        val card = existing
+        if (card != null) {
+            viewModelScope.launch {
+                val key = repo.decryptKey(card)
+                val current = _form.value
+                if (current.apiKey.isEmpty()) _form.value = current.copy(apiKey = key)
+                _keyLoaded.value = true
+            }
+        }
+    }
 
     fun update(transform: (Form) -> Form) {
         _form.value = transform(_form.value)
@@ -104,7 +121,7 @@ class VoiceCardEditViewModel(
         _voicesState.value = VoicePickerState.Idle
     }
 
-    /** 保存；返回 null 成功，否则为错误信息。编辑保留原创建时间。 */
+    // 返回 null 成功，否则为错误信息；编辑保留原创建时间。
     suspend fun save(): String? {
         val current = _form.value
         val card = VoiceCard(

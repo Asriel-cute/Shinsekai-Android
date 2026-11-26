@@ -42,14 +42,30 @@ data class ChatSettings(
     val reasoningEffort: String = ReasoningEffort.none.name,
 )
 
-// imagePath 为会话内帧文件路径（app 侧指针），发送前在 IO 线程读出 imageBase64；两者均 null 时按纯文本序列化，与旧格式一致。
+// input 条目类型；后两者仅用于 CAMERA 工具续跑请求的尾部配对，不落盘。
+@Serializable
+enum class InputType { message, function_call, function_call_output }
+
+// 续跑原样带回：Anthropic thinking 用 text+signature，redacted_thinking 与 Responses reasoning 用 opaque 原文。
+@Serializable
+data class ThinkingPart(
+    val text: String = "",
+    val signature: String = "",
+    val opaque: String? = null,
+)
+
+// imagePath 为帧文件路径，发送前 IO 读出 imageBase64，两者均 null 时按旧纯文本格式序列化；工具条目字段仅续跑请求内生效、不落盘。
 @Serializable
 data class InputItem(
-    val type: String = "message",
+    val type: InputType = InputType.message,
     val role: Role,
     val content: String,
     val imagePath: String? = null,
     val imageBase64: String? = null,
+    val callId: String? = null,
+    val toolName: String? = null,
+    val thoughtSignature: String? = null,
+    val thinking: List<ThinkingPart>? = null,
 )
 
 // {dialog:[{name,sprite,speech,translate?}]}；sprite 为 1 基编号字符串、"-1" 不切换；translate 仅供云语音合成。

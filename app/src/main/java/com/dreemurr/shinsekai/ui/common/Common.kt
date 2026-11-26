@@ -47,8 +47,7 @@ fun spriteInfoText(character: Character): String =
 fun formatImportedAt(millis: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(millis))
 
-// CSS 颜色解析：# 开头交给系统 parseColor（#RRGGBB / #AARRGGBB / 颜色名），
-// 其余尝试 rgb() / rgba() 函数式写法；无法识别一律返回 null，由调用方回落主题色。
+// CSS 颜色解析：# 开头交给系统 parseColor，其余试 rgb()/rgba()；无法识别返回 null，由调用方回落主题色。
 fun parseCssColor(raw: String?): Color? {
     val value = raw?.trim().orEmpty()
     if (value.isEmpty()) return null

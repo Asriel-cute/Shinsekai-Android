@@ -70,7 +70,7 @@ import com.dreemurr.shinsekai.session.ChatType
 import com.dreemurr.shinsekai.ui.common.ColorDot
 import com.dreemurr.shinsekai.ui.common.EmptyState
 
-// 新建与编辑共用：角色、主控、场景与云语音；编辑保存时按当前参数重生成 system 快照。
+// 新建与编辑共用：角色、主控、场景、云语音与数值/选项开关；编辑保存时按当前参数重生成 system 快照。
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionSetupScreen(
@@ -101,6 +101,8 @@ fun SessionSetupScreen(
     var chatType by rememberSaveable(sessionKey) { mutableStateOf(existing?.chatType ?: ChatType.TEXT) }
     var scenario by rememberSaveable(sessionKey) { mutableStateOf(existing?.scenario ?: "") }
     var cloudTts by rememberSaveable(sessionKey) { mutableStateOf(existing?.cloudTtsEnabled ?: true) }
+    var stat by rememberSaveable(sessionKey) { mutableStateOf(existing?.statEnabled ?: false) }
+    var choice by rememberSaveable(sessionKey) { mutableStateOf(existing?.choiceEnabled ?: false) }
     var playerId by rememberSaveable(sessionKey) { mutableStateOf(existing?.playerCharacterId) }
     var backgroundId by rememberSaveable(sessionKey) { mutableStateOf(existing?.backgroundId) }
     var saving by remember { mutableStateOf(false) }
@@ -157,6 +159,8 @@ fun SessionSetupScreen(
                             selectedIds = selectedIds,
                             scenario = scenario,
                             cloudTtsEnabled = cloudTts,
+                            statEnabled = stat,
+                            choiceEnabled = choice,
                             playerCharacterId = selectedPlayer?.id,
                             backgroundId = backgroundId,
                             title = sessionName,
@@ -370,28 +374,57 @@ fun SessionSetupScreen(
                 )
             }
             item {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            stringResource(R.string.session_setup_cloud_tts),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            stringResource(R.string.session_setup_cloud_tts_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = cloudTts, onCheckedChange = { cloudTts = it })
-                }
+                SwitchRow(
+                    title = stringResource(R.string.session_setup_cloud_tts),
+                    hint = stringResource(R.string.session_setup_cloud_tts_hint),
+                    checked = cloudTts,
+                    onCheckedChange = { cloudTts = it },
+                )
+            }
+            item {
+                SwitchRow(
+                    title = stringResource(R.string.session_setup_stat),
+                    hint = stringResource(R.string.session_setup_stat_hint),
+                    checked = stat,
+                    onCheckedChange = { stat = it },
+                )
+            }
+            item {
+                SwitchRow(
+                    title = stringResource(R.string.session_setup_choice),
+                    hint = stringResource(R.string.session_setup_choice_hint),
+                    checked = choice,
+                    onCheckedChange = { choice = it },
+                )
             }
             item { Spacer(Modifier.height(8.dp)) }
         }
+    }
+}
+
+// 会话开关行：标题 + 说明 + Switch，云语音/数值状态/对话选项共用同一样式。
+@Composable
+private fun SwitchRow(
+    title: String,
+    hint: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

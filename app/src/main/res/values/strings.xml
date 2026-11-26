@@ -57,6 +57,10 @@
     <string name="action_collapse">收起</string>
     <string name="session_setup_cloud_tts">云语音</string>
     <string name="session_setup_cloud_tts_hint">关闭后改用本地立绘语音；主控台词只显示不发声</string>
+    <string name="session_setup_stat">数值状态</string>
+    <string name="session_setup_stat_hint">AI 维护数值面板，并把当前数值随每条消息发给模型</string>
+    <string name="session_setup_choice">对话选项</string>
+    <string name="session_setup_choice_hint">AI 每轮回复结尾给出选项，点击填入输入框，由你决定是否发送</string>
     <string name="session_setup_player">主控角色</string>
     <string name="session_setup_player_hint">选择故事中的主控角色；AI 会为其补充台词，并自行判断是否复述你的台词；有云语音时会朗读</string>
     <string name="session_setup_player_none">不设置</string>
@@ -78,6 +82,10 @@
     <string name="chat_record">聊天记录</string>
     <string name="chat_first_input_hint">请先输入你的第一句话</string>
     <string name="chat_generating">生成中…</string>
+    <string name="chat_thinking">思考中…</string>
+    <string name="chat_stats_expand_hint">数值状态，点击展开</string>
+    <string name="chat_stats_collapse_hint">数值状态，点击收起</string>
+    <string name="chat_stats_badge_format">数值 %1$d</string>
     <string name="chat_input_hint">输入你的台词…</string>
     <string name="chat_input_hint_as_format">以%1$s的身份输入台词或行动…</string>
     <string name="chat_not_configured_title">未配置API</string>
@@ -89,6 +97,8 @@
     <string name="record_user_label">你</string>
     <string name="record_user_label_as_format">你（%1$s）</string>
     <string name="record_rewind">回溯</string>
+    <string name="record_choice_label">选项</string>
+    <string name="record_scroll_to_bottom">回到底部</string>
     <string name="rewind_confirm_title">回溯到这条消息</string>
     <string name="rewind_confirm_body">该消息会回到输入框，之后的记录将被删除且无法恢复。是否继续？</string>
     <string name="chat_summary_label">历史摘要</string>

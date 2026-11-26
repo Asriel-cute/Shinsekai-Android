@@ -21,7 +21,6 @@ class CharacterDetailViewModel(
         .map { list -> list.firstOrNull { it.id == characterId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    /** 当前绑定的声音卡片；未绑定为 null。 */
     val boundCard: StateFlow<VoiceCard?> = combine(
         container.voiceBindings.bindings,
         container.voiceCardRepository.cards,

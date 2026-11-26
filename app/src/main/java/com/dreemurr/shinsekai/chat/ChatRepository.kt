@@ -1,6 +1,7 @@
 package com.dreemurr.shinsekai.chat
 
 import android.util.Base64
+import com.dreemurr.shinsekai.core.normalizeBaseUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -29,7 +30,15 @@ import java.util.concurrent.TimeUnit
 // 终止事件携带 LLM 原文，供完整或残片落盘。
 sealed interface ChatStreamEvent {
     data class DialogPart(val dialog: Dialog) : ChatStreamEvent
-    data class Completed(val rawText: String) : ChatStreamEvent
+    // 思考文本增量：只供前端流式展示，不进原文、不落盘。
+    data class Thinking(val text: String) : ChatStreamEvent
+    // CAMERA 工具调用命中；thoughtSignature 仅 Gemini 续跑请求需要。
+    data class CameraRequested(val thoughtSignature: String? = null) : ChatStreamEvent
+    // thinking 为本段收到的可回放思考块，仅续跑请求使用。
+    data class Completed(
+        val rawText: String,
+        val thinking: List<ThinkingPart> = emptyList(),
+    ) : ChatStreamEvent
     data class Cancelled(val rawText: String) : ChatStreamEvent
     data class Error(val rawText: String, val message: String) : ChatStreamEvent
 }
@@ -83,6 +92,8 @@ class ChatRepository {
     fun getChatStream(
         settings: ChatSettings,
         history: List<InputItem>,
+        cameraTool: Boolean,
+        cameraBudget: Int,
     ): Flow<ChatStreamEvent> = flow {
 
         val spec = specFor(settings.provider, settings.apiType)
@@ -94,7 +105,13 @@ class ChatRepository {
         // 帧文件在 IO 线程读出 base64；文件缺失的条目降级为纯文字。
         val resolvedHistory = history.map(::resolveImage)
 
-        val api = apiFor(settings.baseUrl)
+        // 归一化后仍解析失败转可读错误，避免异常冒到协程外崩溃；原文给空串，不把上一轮旧缓冲当本轮残片落盘。
+        val api = try {
+            apiFor(settings.baseUrl)
+        } catch (e: IllegalArgumentException) {
+            emit(ChatStreamEvent.Error("", friendlyError(e)))
+            return@flow
+        }
 
         cancelRequested = false
         synchronized(rawBuffer) { rawBuffer.setLength(0) }
@@ -103,7 +120,7 @@ class ChatRepository {
         val call = api.postStream(
             spec.streamUrl(settings.modelName),
             spec.headers(settings.apiKey),
-            spec.buildStreamBody(json, settings.modelName, resolvedHistory, effort),
+            spec.buildStreamBody(json, settings.modelName, resolvedHistory, effort, cameraTool),
         )
         currentCall = call
 
@@ -134,19 +151,24 @@ class ChatRepository {
                 return@flow
             }
 
-            emit(readSse(body, spec, parser, call))
+            emit(readSse(body, spec, parser, call, cameraBudget))
         } finally {
             streamActive = false
         }
     }.flowOn(Dispatchers.IO)
 
-    // 各家事件差异由 spec 解析；EOF 按完成；读取异常区分停止与网络中断。
+    // CAMERA 命中即本段终点（其后文本丢弃、预算耗尽静默忽略）；思考文本只转发前端，可回放块随 Completed 交给续跑。
     private suspend fun FlowCollector<ChatStreamEvent>.readSse(
         body: ResponseBody,
         spec: ProviderSpec,
         parser: DialogJsonParser,
         call: Call<ResponseBody>,
+        cameraBudget: Int,
     ): ChatStreamEvent {
+        var cameraDetected = false
+        // 当前 thinking 块的累积文本（跨多个分片），签名到达才封口成块。
+        val blockText = StringBuilder()
+        val thinkingParts = mutableListOf<ThinkingPart>()
         try {
             body.byteStream().bufferedReader().use { reader ->
                 while (true) {
@@ -157,7 +179,7 @@ class ChatRepository {
                     if (payload.isEmpty()) continue
 
                     // OpenAI 风格流结束哨兵。
-                    if (payload == "[DONE]") return ChatStreamEvent.Completed(raw())
+                    if (payload == "[DONE]") return ChatStreamEvent.Completed(raw(), thinkingParts)
 
                     // 畸形 data 行记录后跳过。
                     val element = try {
@@ -168,20 +190,44 @@ class ChatRepository {
                     }
                     val obj = element as? JsonObject ?: continue
 
-                    when (val result = spec.parseSseData(obj)) {
-                        is SseParseResult.Delta -> {
-                            synchronized(rawBuffer) { rawBuffer.append(result.text) }
-                            for (dialog in parser.append(result.text)) {
-                                emit(ChatStreamEvent.DialogPart(dialog))
+                    for (result in spec.parseSseData(obj)) {
+                        when (result) {
+                            is SseParseResult.Delta -> if (!cameraDetected) {
+                                synchronized(rawBuffer) { rawBuffer.append(result.text) }
+                                for (dialog in parser.append(result.text)) {
+                                    emit(ChatStreamEvent.DialogPart(dialog))
+                                }
                             }
+
+                            is SseParseResult.Thinking -> if (!cameraDetected) {
+                                blockText.append(result.text)
+                                emit(ChatStreamEvent.Thinking(result.text))
+                            }
+
+                            is SseParseResult.ThinkingBoundary -> {
+                                // 带签名即封口成块（文本可为空，新模型只给签名）；不带则丢弃未封口残留。
+                                result.signature?.takeIf { it.isNotEmpty() }?.let { signature ->
+                                    thinkingParts.add(
+                                        ThinkingPart(text = blockText.toString(), signature = signature),
+                                    )
+                                }
+                                blockText.setLength(0)
+                            }
+
+                            is SseParseResult.ThinkingItem ->
+                                thinkingParts.add(ThinkingPart(opaque = result.json.toString()))
+
+                            is SseParseResult.CameraTool ->
+                                if (!cameraDetected && cameraBudget > 0) {
+                                    cameraDetected = true
+                                    emit(ChatStreamEvent.CameraRequested(result.thoughtSignature))
+                                }
+
+                            SseParseResult.Done -> return ChatStreamEvent.Completed(raw(), thinkingParts)
+
+                            is SseParseResult.Failed ->
+                                return ChatStreamEvent.Error(raw(), result.message)
                         }
-
-                        SseParseResult.Done -> return ChatStreamEvent.Completed(raw())
-
-                        is SseParseResult.Failed ->
-                            return ChatStreamEvent.Error(raw(), result.message)
-
-                        SseParseResult.Ignored -> Unit
                     }
                 }
             }
@@ -189,7 +235,7 @@ class ChatRepository {
             return if (isUserCancel(call)) ChatStreamEvent.Cancelled(raw())
             else ChatStreamEvent.Error(raw(), "网络连接中断")
         }
-        return ChatStreamEvent.Completed(raw())
+        return ChatStreamEvent.Completed(raw(), thinkingParts)
     }
 
     // 拉取模型列表；baseUrl/apiKey 取自当前编辑草稿，可与未保存表单一致。
@@ -280,7 +326,7 @@ class ChatRepository {
     }
 
     private fun apiFor(url: String): ChatApi {
-        val baseUrl = if (url.endsWith("/")) url else "$url/"
+        val baseUrl = normalizeBaseUrl(url)
         return cachedApi?.takeIf { cachedBaseUrl == baseUrl }
             ?: Retrofit.Builder()
                 .baseUrl(baseUrl)

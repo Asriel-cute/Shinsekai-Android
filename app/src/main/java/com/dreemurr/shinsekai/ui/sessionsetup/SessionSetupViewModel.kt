@@ -43,6 +43,8 @@ class SessionSetupViewModel(
         backgroundId: String?,
         title: String,
         chatType: ChatType,
+        statEnabled: Boolean,
+        choiceEnabled: Boolean,
         onSaved: (String) -> Unit,
     ) {
         viewModelScope.launch {
@@ -81,6 +83,8 @@ class SessionSetupViewModel(
                     background = background,
                     title = title,
                     chatType = chatType,
+                    statEnabled = statEnabled,
+                    choiceEnabled = choiceEnabled,
                 ).id
             } else {
                 container.sessionRepository.updateSetup(
@@ -93,6 +97,8 @@ class SessionSetupViewModel(
                     background = background,
                     title = title,
                     chatType = chatType,
+                    statEnabled = statEnabled,
+                    choiceEnabled = choiceEnabled,
                 )?.id ?: return@launch
             }
             onSaved(id)

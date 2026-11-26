@@ -49,7 +49,6 @@ class VoiceBindings(
         }
     }
 
-    // 先写临时文件再原子替换。
     private fun persist(map: Map<String, String>) {
         writeTextAtomic(file, appJson.encodeToString(serializer, map))
     }

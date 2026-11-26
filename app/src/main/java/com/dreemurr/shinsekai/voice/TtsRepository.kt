@@ -1,5 +1,6 @@
 package com.dreemurr.shinsekai.voice
 
+import com.dreemurr.shinsekai.core.normalizeBaseUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -420,7 +421,7 @@ class TtsRepository {
     }
 
     private fun apiFor(url: String): TtsApi {
-        val baseUrl = if (url.endsWith("/")) url else "$url/"
+        val baseUrl = normalizeBaseUrl(url)
         return cachedApi?.takeIf { cachedBaseUrl == baseUrl }
             ?: Retrofit.Builder()
                 .baseUrl(baseUrl)

@@ -4,7 +4,7 @@ import com.dreemurr.shinsekai.background.Background
 import com.dreemurr.shinsekai.character.Character
 import com.dreemurr.shinsekai.voice.VoiceLanguages
 
-// 无 Android 依赖；仅在新建会话时拼装提示词。
+// 无 Android 依赖；新建会话与会话设置保存时拼装提示词。
 object TemplateGenerator {
 
     // composeForLlm 会 removeSuffix 后重新追加，两处必须完全一致，故保留为常量。
@@ -16,6 +16,8 @@ object TemplateGenerator {
         playerCharacterId: String? = null,
         background: Background? = null,
         videoChat: Boolean = false,
+        statEnabled: Boolean = false,
+        choiceEnabled: Boolean = false,
     ): String {
         require(characters.isNotEmpty()) { "生成模板至少需要一个角色" }
 
@@ -43,9 +45,9 @@ object TemplateGenerator {
             character.name to name
         }
 
-        // 1536 为固定文案的容量预估，减少拼装时扩容。
+        // 2048 为固定文案的容量预估，减少拼装时扩容。
         return buildString(
-            1536 + characters.sumOf { it.name.length + it.emotionTags.length + it.characterSetting.length } +
+            2048 + characters.sumOf { it.name.length + it.emotionTags.length + it.characterSetting.length } +
                 (background?.let { it.bgTags.length + it.bgmTags.length } ?: 0),
         ) {
             append("出场人物有：").append(names).append("\n\n")
@@ -55,9 +57,12 @@ object TemplateGenerator {
             appendBackgroundSection(background, hasScenes, hasBgm)
             appendVideoSection(videoChat)
             appendPlayerSection(player)
-            appendRequirements(names, spriteChars, plainChars, translationTargets, hasScenes, hasBgm, videoChat)
+            appendRequirements(
+                names, spriteChars, plainChars, translationTargets,
+                hasScenes = hasScenes, hasBgm = hasBgm, statEnabled = statEnabled, choiceEnabled = choiceEnabled,
+            )
             append('\n')
-            appendOpening(hasScenes, hasBgm)
+            appendOpening(hasScenes, hasBgm, statEnabled = statEnabled)
             append(JSON_REMINDER).append('\n')
         }
     }
@@ -81,7 +86,7 @@ object TemplateGenerator {
             "dialog": [
                 {
                 "name": "角色名",
-                "sprite": "str, 立绘代号或场景/BGM 编号，无立绘或旁白固定为 -1",
+                "sprite": "str, 立绘代号或场景/BGM 编号，无立绘或旁白/CHOICE/STAT 固定为 -1",
                 "speech": "前端展示的台词",
                 "translate": "语音合成用的朗读文本（无要求的角色省略）"
                 }
@@ -132,11 +137,11 @@ object TemplateGenerator {
         }
     }
 
-    // 视频通话段：画面消息与 CAMERA 工具调用语义，字段规则在要求段并列（主控与视频会话互斥）。
+    // 视频通话段：画面消息与 request_camera 工具语义（主控与视频会话互斥）。
     private fun StringBuilder.appendVideoSection(videoChat: Boolean) {
         if (!videoChat) return
-        append("视频通话：你正在与用户进行视频通话。用户的画面会不定期以图像消息（文字标记为「（摄像头画面）」）出现在对话中；看到图像时对画面内容自然反应，没有图像时不要假装看得见，按需索要画面。\n\n")
-        append("想看用户当前画面时，输出一条 name 为 CAMERA 的 dialog 发起画面请求；发起后意味着立即结束本轮回复，用户画面会随后送达，下一轮再对画面作出反应。\n\n")
+        append("视频通话：你正在与用户进行视频通话。用户的画面会不定期以图像消息（文字标记为「（摄像头画面）」）出现在对话中；看到图像时对画面内容自然反应，没有图像时不要说看不见，按需执行索要画面即可。\n\n")
+        append("想看用户当前画面时，调用 request_camera 工具（无参数）发起画面请求；画面会作为工具结果与图像消息送达，随后在同一轮内继续回复并对画面作出反应。除工具调用外，其余输出仍为规定的 JSON。\n\n")
     }
 
     // 主控固定语义：AI 可补写日常台词并按需复述用户台词，其余规则沿用通用提示词。
@@ -159,48 +164,80 @@ object TemplateGenerator {
         translationTargets: List<Pair<String, String>>,
         hasScenes: Boolean,
         hasBgm: Boolean,
-        videoChat: Boolean,
+        statEnabled: Boolean,
+        choiceEnabled: Boolean,
     ) {
         append("要求：\n")
         rule("格式严格：输出内容必须严格且仅为 JSON 格式。")
-        val reservedKeywords = buildList {
+        // 非台词条目：立绘、台词风格与翻译范围三处共用同一份名单；保留关键字在其后追加场景/BGM。
+        val nonSpeechNames = buildList {
             add("旁白")
+            if (choiceEnabled) add("CHOICE")
+            if (statEnabled) add("STAT")
+        }.joinToString("、")
+        val reservedKeywords = buildList {
+            add(nonSpeechNames)
             if (hasScenes) add("SCENE")
             if (hasBgm) add("bgm")
-            if (videoChat) add("CAMERA")
         }.joinToString("、")
         rule("角色名限制：name 字段只能是以下之一：$names 以及其他可能出现的人物名，或者固定关键字：$reservedKeywords。")
-        appendSpriteRules(spriteChars, plainChars)
-        appendPresentationRules(hasScenes, hasBgm, videoChat)
-        rule("台词风格：speech 字段须为简体中文，内容尽量符合角色个性、说话方式与背景设定。")
-        appendTranslationRules(translationTargets)
+        appendSpriteRules(spriteChars, plainChars, nonSpeechNames)
+        appendPresentationRules(hasScenes, hasBgm)
+        rule("台词风格：speech 字段须为简体中文，内容尽量符合角色个性、说话方式与背景设定。除$nonSpeechNames 外不得包含动作、表情、心理、旁白或解释等。")
+        appendTranslationRules(translationTargets, nonSpeechNames)
         // 仅提示模型按句意拆条，不在前端截断。
         rule("篇幅控制：每个元素的 speech 字段不超过 500 字左右；内容多时必须按句意拆成多个元素，即同一角色连续说话或中间情绪变化就拆成多个元素。")
         rule("数组结构：所有对话和事件必须按时间顺序放入 dialog 数组中，数组中至少包含两个元素。")
         rule("旁白用途：旁白元素用于描写场景变化、人物动作、心理活动和环境气氛。")
+        appendChoiceRules(choiceEnabled)
+        appendStatRules(statEnabled)
     }
 
-    private fun StringBuilder.appendTranslationRules(targets: List<Pair<String, String>>) {
+    // 选项规则与上游一致：结尾必出、'/' 分隔、三种取向各一。
+    private fun StringBuilder.appendChoiceRules(choiceEnabled: Boolean) {
+        if (!choiceEnabled) return
+        rule("选项位置：dialog 数组的最后一个元素必须是 CHOICE。")
+        rule("选项格式：CHOICE 的 speech 内用 '/' 分隔子选项。必须是用户可选择的对话或行为的纯文本描述。")
+        rule("选项平衡：必须包括一个无厘头、一个精明/理智、以及一个中庸的选项。所有选项必须与当前剧情与人物性格相符。")
+    }
+
+    // 数值条目原样留在 LLM 历史里，另有每轮注入的 [当前状态] 块给当前快照；要求整表输出，避免只报变化项。
+    private fun StringBuilder.appendStatRules(statEnabled: Boolean) {
+        if (!statEnabled) return
+        rule(
+            "数值显示：STAT 元素表示用户或角色状态。name 为 STAT 时，speech 每行只能使用 " +
+                "icon|label|value|max 格式；max 可选。可用 icon：heart、shield、zap、star、sparkles、target、coins、clock、gauge。" +
+                "例如：heart|生命|72|100\nzap|精力|30|100 等。",
+        )
+        rule(
+            "数值更新：用户消息前的 [当前状态] 块列出当前的数值。数值随着剧情发展需要变化时请输出增删改后的完整 STAT。",
+        )
+    }
+
+    private fun StringBuilder.appendTranslationRules(targets: List<Pair<String, String>>, nonSpeechNames: String) {
         if (targets.isEmpty()) return
         val grouped = targets.groupBy({ it.second }, { it.first })
             .entries
             .joinToString("；") { (language, names) -> "${names.joinToString("、")}→$language" }
-        rule("翻译字段：$grouped。上述角色每条台词必须输出目标语言的非空 translate，自动则自行判断目标语言，仅用于语音合成；不得包含动作、表情、心理、旁白或解释等。")
-        rule("翻译范围：未列出的角色、旁白、陌生角色及 speech 为空的条目不填 translate。")
+        rule("翻译字段：$grouped。上述角色每条台词必须输出目标语言的非空 translate，自动则自行判断目标语言，仅用于语音合成；绝对不得包含动作、表情、心理、旁白或解释等。")
+        rule("翻译范围：未列出的角色、$nonSpeechNames、陌生角色及 speech 为空的条目不填 translate。")
     }
 
-    private fun StringBuilder.appendSpriteRules(spriteChars: List<Character>, plainChars: List<Character>) {
+    private fun StringBuilder.appendSpriteRules(
+        spriteChars: List<Character>,
+        plainChars: List<Character>,
+        nonSpeechNames: String,
+    ) {
         if (spriteChars.isEmpty()) return rule("立绘规范：该角色没有可用立绘，sprite 字段必须固定为 -1。")
         rule("立绘规范：sprite 字段必须填写对应立绘的编号（从 1 开始，按立绘说明中的顺序），并根据当前台词语气和情绪自动选择最合适的立绘。")
         if (plainChars.isNotEmpty()) rule("无立绘角色：${plainChars.joinToString("，") { it.name }} 的 sprite 字段固定为 -1。")
-        rule("非立绘角色：当 name 为旁白时，sprite 字段必须固定为 -1。")
+        rule("非立绘角色：当 name 为$nonSpeechNames 时，sprite 字段必须固定为 -1。")
     }
 
     // 立绘/场景/BGM 共用 sprite 字段的 1 基编号语义，规则文案保持同一说法。
     private fun StringBuilder.appendPresentationRules(
         hasScenes: Boolean,
         hasBgm: Boolean,
-        videoChat: Boolean,
     ) {
         if (hasScenes) {
             rule("场景切换：当 name 为 SCENE 时，sprite 字段填写场景编号（从 1 开始），如 3 表示切换到第 3 个场景；此时 speech 与 translate 留空。")
@@ -208,16 +245,16 @@ object TemplateGenerator {
         if (hasBgm) {
             rule("BGM切换：当 name 为 bgm 时，sprite 字段填写 BGM 编号（从 1 开始），如 2 表示切换到第 2 首；应根据当前氛围切换；此时 speech 与 translate 留空。")
         }
-        if (videoChat) {
-            rule("画面请求：当 name 为 CAMERA 时，sprite 字段固定为 -1，此时 speech 与 translate 留空；该条目意味着本轮结束，等待下轮画面返回。")
-        }
     }
 
-    // 有背景时开场额外要求设置初始场景与 BGM。
-    private fun StringBuilder.appendOpening(hasScenes: Boolean, hasBgm: Boolean) {
+    // 有背景时开场额外要求设置初始场景与 BGM；开数值时要求给出初始数值。
+    private fun StringBuilder.appendOpening(hasScenes: Boolean, hasBgm: Boolean, statEnabled: Boolean) {
         append("请开始对话，开始时介绍用户所处的情境和背景")
         if (hasScenes || hasBgm) {
             append("，设置初始的场景和BGM")
+        }
+        if (statEnabled) {
+            append("， STAT 可给出用户的数值")
         }
         append("，以及正在做的事情：").append("\n\n")
     }

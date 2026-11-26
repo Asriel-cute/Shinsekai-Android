@@ -5,12 +5,14 @@ import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,8 +26,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -33,8 +38,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MonetizationOn
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.TrackChanges
+import androidx.compose.material.icons.filled.VerticalAlignBottom
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,23 +70,33 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -88,7 +113,10 @@ import coil3.request.crossfade
 import com.dreemurr.shinsekai.R
 import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.chat.DialogJsonParser
+import com.dreemurr.shinsekai.chat.PresentationKind
 import com.dreemurr.shinsekai.chat.Role
+import com.dreemurr.shinsekai.chat.StatItem
+import com.dreemurr.shinsekai.chat.choiceOptions
 import com.dreemurr.shinsekai.chat.presentationKind
 import com.dreemurr.shinsekai.di.LocalAppContainer
 import com.dreemurr.shinsekai.session.SessionEntry
@@ -96,6 +124,7 @@ import com.dreemurr.shinsekai.ui.chat.ChatViewModel.LineKind
 import com.dreemurr.shinsekai.ui.chat.ChatViewModel.Phase
 import com.dreemurr.shinsekai.ui.common.parseCssColor
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -125,7 +154,6 @@ fun ChatScreen(
     // 摄像头/立绘大小互换；离开页面重置为摄像头小窗默认态。
     var cameraSwapped by rememberSaveable { mutableStateOf(false) }
 
-    // 视频会话进入即请求摄像头权限；拒绝直接退出，无法使用视频聊天。
     val cameraDeniedText = stringResource(R.string.chat_camera_permission_denied)
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -256,11 +284,32 @@ fun ChatScreen(
                         )
                     }
                 }
+                // 数值面板贴左上、选项浮层贴底（对话框正上方）：都在舞台内叠加，不挤压立绘。
+                if (state.stats.isNotEmpty()) {
+                    StatsPanel(
+                        stats = state.stats,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(12.dp),
+                    )
+                }
+                if (state.choices.isNotEmpty() && !state.loading && !state.streaming &&
+                    state.phase != Phase.Error
+                ) {
+                    ChoiceOverlay(
+                        options = state.choices,
+                        onPick = vm::pickChoice,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 12.dp),
+                    )
+                }
             }
 
             DialogueBox(
                 state = state,
                 visibleSpeech = vm.visibleSpeech,
+                thinking = vm.thinking,
                 onRetry = vm::retry,
                 onBackToInput = vm::dismissError,
                 modifier = Modifier
@@ -485,6 +534,174 @@ private fun SceneMiniWindow(
     }
 }
 
+// 数值面板：舞台左上角竖排，宽度随内容自适应（上限 180dp）；点击整块收起成小胶囊，再点展开。
+@Composable
+private fun StatsPanel(stats: List<StatItem>, modifier: Modifier = Modifier) {
+    var collapsed by rememberSaveable { mutableStateOf(false) }
+    val panelLabel = stringResource(
+        if (collapsed) R.string.chat_stats_expand_hint else R.string.chat_stats_collapse_hint,
+    )
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        shape = shape,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+        modifier = modifier
+            .widthIn(max = 180.dp)
+            .heightIn(max = 220.dp)
+            // 裁切须在 clickable 之前，水波纹才跟着圆角走；Surface 自带的裁切在其外层，裁不到水波纹。
+            .clip(shape)
+            .semantics { contentDescription = panelLabel }
+            .clickable { collapsed = !collapsed },
+    ) {
+        // 动画挂在内容层：Surface 自身尺寸随之缩放，背景/边框两个方向都有动画，超出部分由 Surface 裁切。
+        Box(Modifier.animateContentSize()) {
+            if (collapsed) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Speed,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        stringResource(R.string.chat_stats_badge_format, stats.size),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            } else {
+                // 宽度取最宽一行的内容宽度：行内不再用 weight 撑满，进度条随之等宽对齐。
+                Column(
+                    Modifier
+                        .width(IntrinsicSize.Max)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    stats.forEach { stat -> StatRow(stat) }
+                }
+            }
+        }
+    }
+}
+
+// 不用 LinearProgressIndicator：内部固定 240dp 宽，固有宽度会把面板的 IntrinsicSize.Max 顶到上限。
+@Composable
+private fun StatRow(stat: StatItem) {
+    // max 由 StatPayload 保证为正数；无上限不画条，但留等高占位。
+    val ratio = stat.max?.let { (stat.value / it).toFloat().coerceIn(0f, 1f) }
+    val barColor = MaterialTheme.colorScheme.primary
+    val trackColor = barColor.copy(alpha = 0.16f)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                if (ratio == null) return@drawBehind
+                val barHeight = 4.dp.toPx()
+                val top = size.height - barHeight
+                val corner = CornerRadius(2.dp.toPx())
+                drawRoundRect(trackColor, Offset(0f, top), Size(size.width, barHeight), corner)
+                if (ratio > 0f) {
+                    drawRoundRect(barColor, Offset(0f, top), Size(size.width * ratio, barHeight), corner)
+                }
+            }
+            .padding(bottom = 7.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                statIcon(stat.icon),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                stat.label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 96.dp),
+            )
+            Text(
+                buildString {
+                    append(stat.valueText)
+                    stat.maxText?.let { append('/').append(it) }
+                },
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+// 保留图标名 → Material 图标；未知名回落 gauge。
+private fun statIcon(name: String): ImageVector = when (name) {
+    "heart" -> Icons.Filled.Favorite
+    "shield" -> Icons.Filled.Shield
+    "zap" -> Icons.Filled.Bolt
+    "star" -> Icons.Filled.Star
+    "sparkles" -> Icons.Filled.AutoAwesome
+    "target" -> Icons.Filled.TrackChanges
+    "coins" -> Icons.Filled.MonetizationOn
+    "clock" -> Icons.Filled.Schedule
+    else -> Icons.Filled.Speed
+}
+
+// 待选选项：对话框正上方的半透明按钮列，点击回填输入框由用户手动发送；超高内部滚动。
+@Composable
+private fun ChoiceOverlay(
+    options: List<String>,
+    onPick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val optionShape = RoundedCornerShape(14.dp)
+    Column(
+        modifier
+            .heightIn(max = 280.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        options.forEach { option ->
+            Surface(
+                shape = optionShape,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+                    // 同数值面板：裁切在 clickable 之前，水波纹才跟着圆角走。
+                    .clip(optionShape)
+                    .clickable { onPick(option) },
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 22.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        option,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+    }
+}
+
 // 聊天页设置：全局 BGM 音量拖动实时试听；视频会话追加阈值与冷却滑条，均松手落盘。
 @Composable
 private fun ChatSettingsSheetContent(
@@ -497,11 +714,9 @@ private fun ChatSettingsSheetContent(
     // 音量流只在弹层内收集，落盘变化不触发整屏重组。
     val container = LocalAppContainer.current
     val bgmVolume by container.settingsRepository.bgmVolume.collectAsStateWithLifecycle()
-    // 拖动期间的本地值；松手后回到 DataStore 值。
-    var draggingVolume by remember { mutableStateOf<Float?>(null) }
-    var draggingThreshold by remember { mutableStateOf<Float?>(null) }
-    // 冷却滑条为离散档位下标；松手后回到 DataStore 值对应档。
-    var draggingCooldownIndex by remember { mutableStateOf<Float?>(null) }
+    // 拖动值由 SliderState 持有；DataStore 回写后同步回滑条，等待落盘期间滑块停在所选位置。
+    val volumeState = rememberSliderState(bgmVolume)
+    LaunchedEffect(bgmVolume) { volumeState.value = bgmVolume }
     Column(
         Modifier
             .fillMaxWidth()
@@ -526,54 +741,35 @@ private fun ChatSettingsSheetContent(
             Text(
                 stringResource(
                     R.string.chat_settings_volume_percent_format,
-                    ((draggingVolume ?: bgmVolume) * 100).roundToInt(),
+                    (volumeState.value * 100).roundToInt(),
                 ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Slider(
-            value = draggingVolume ?: bgmVolume,
+            state = volumeState,
             onValueChange = {
-                draggingVolume = it
+                volumeState.value = it
                 onPreviewVolume(it)
             },
-            onValueChangeFinished = {
-                draggingVolume?.let(onVolumeSettled)
-                draggingVolume = null
-            },
+            onValueChangeFinished = { onVolumeSettled(volumeState.value) },
         )
         if (videoChat) {
             Spacer(Modifier.height(8.dp))
-            CameraThresholdRow(
-                draggingValue = draggingThreshold,
-                onValueChange = { draggingThreshold = it },
-                onValueChangeFinished = {
-                    draggingThreshold?.let(onThresholdSettled)
-                    draggingThreshold = null
-                },
-            )
-            CameraCooldownRow(
-                draggingIndex = draggingCooldownIndex,
-                onIndexChange = { draggingCooldownIndex = it },
-                onValueChangeFinished = {
-                    draggingCooldownIndex?.let { onCooldownSettled(cooldownIndexToSeconds(it.roundToInt())) }
-                    draggingCooldownIndex = null
-                },
-            )
+            CameraThresholdRow(onThresholdSettled)
+            CameraCooldownRow(onCooldownSettled)
         }
     }
 }
 
 // 画面变化阈值：10%–70% 步进 5%，越高越不灵敏。
 @Composable
-private fun CameraThresholdRow(
-    draggingValue: Float?,
-    onValueChange: (Float) -> Unit,
-    onValueChangeFinished: () -> Unit,
-) {
+private fun CameraThresholdRow(onSettled: (Float) -> Unit) {
     val container = LocalAppContainer.current
     val threshold by container.settingsRepository.cameraChangeThreshold.collectAsStateWithLifecycle()
+    val thresholdState = rememberSliderState(threshold, steps = 11, trackRange = 0.10f..0.70f)
+    LaunchedEffect(threshold) { thresholdState.value = threshold }
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -586,32 +782,32 @@ private fun CameraThresholdRow(
         Text(
             stringResource(
                 R.string.chat_settings_camera_threshold_percent_format,
-                (((draggingValue ?: threshold)) * 100).roundToInt(),
+                (thresholdState.value * 100).roundToInt(),
             ),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
     Slider(
-        value = draggingValue ?: threshold,
-        onValueChange = onValueChange,
-        onValueChangeFinished = onValueChangeFinished,
-        valueRange = 0.10f..0.70f,
-        steps = 11,
+        state = thresholdState,
+        onValueChange = { thresholdState.value = it },
+        onValueChangeFinished = { onSettled(thresholdState.value) },
     )
 }
 
 // 画面变化冷却：10–120s 步进 5s（下标 0..22 对应 10+5*i），最右档 23 为关闭（存储值 0）。
 @Composable
-private fun CameraCooldownRow(
-    draggingIndex: Float?,
-    onIndexChange: (Float) -> Unit,
-    onValueChangeFinished: () -> Unit,
-) {
+private fun CameraCooldownRow(onSettled: (Int) -> Unit) {
     val container = LocalAppContainer.current
     val cooldownSeconds by container.settingsRepository.cameraCooldownSeconds.collectAsStateWithLifecycle()
     val settledIndex = secondsToCooldownIndex(cooldownSeconds)
-    val currentIndex = draggingIndex?.roundToInt() ?: settledIndex
+    val cooldownState = rememberSliderState(
+        settledIndex.toFloat(),
+        steps = COOLDOWN_OFF_INDEX - 1,
+        trackRange = 0f..COOLDOWN_OFF_INDEX.toFloat(),
+    )
+    LaunchedEffect(settledIndex) { cooldownState.value = settledIndex.toFloat() }
+    val currentIndex = cooldownState.value.roundToInt()
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -635,11 +831,9 @@ private fun CameraCooldownRow(
         )
     }
     Slider(
-        value = (draggingIndex ?: settledIndex.toFloat()),
-        onValueChange = onIndexChange,
-        onValueChangeFinished = onValueChangeFinished,
-        valueRange = 0f..COOLDOWN_OFF_INDEX.toFloat(),
-        steps = COOLDOWN_OFF_INDEX - 1,
+        state = cooldownState,
+        onValueChange = { cooldownState.value = it },
+        onValueChangeFinished = { onSettled(cooldownIndexToSeconds(cooldownState.value.roundToInt())) },
     )
 }
 
@@ -845,6 +1039,7 @@ private fun NameBadge(line: ChatViewModel.DisplayLine) {
 private fun DialogueBox(
     state: ChatViewModel.UiState,
     visibleSpeech: StateFlow<String>,
+    thinking: StateFlow<String>,
     onRetry: () -> Unit,
     onBackToInput: () -> Unit,
     modifier: Modifier = Modifier,
@@ -885,10 +1080,7 @@ private fun DialogueBox(
                         onBackToInput = onBackToInput,
                     )
 
-                    Phase.Streaming -> CenteredHint(
-                        text = stringResource(R.string.chat_generating),
-                        showProgress = true,
-                    )
+                    Phase.Streaming -> StreamingContent(thinking)
 
                     else -> LineContent(state, visibleSpeech)
                 }
@@ -986,6 +1178,51 @@ private fun CenteredHint(text: String, showProgress: Boolean = false) {
     }
 }
 
+// 生成中的思维链：有思考文本时流式展示并自动滚到最新，没有时保持原转圈提示；高频进度只在此收集。
+@Composable
+private fun StreamingContent(thinking: StateFlow<String>) {
+    val text by thinking.collectAsStateWithLifecycle()
+    if (text.isEmpty()) {
+        CenteredHint(text = stringResource(R.string.chat_generating), showProgress = true)
+        return
+    }
+    val scrollState = rememberScrollState()
+    // 键取 maxValue：它在布局后才更新，按文本键会滚到上一轮的旧底部、末尾差一截。
+    LaunchedEffect(scrollState.maxValue) {
+        scrollState.scrollTo(scrollState.maxValue)
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 130.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                stringResource(R.string.chat_thinking),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        Text(
+            text,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier
+                .heightIn(max = 132.dp)
+                .verticalScroll(scrollState),
+        )
+    }
+}
+
 // 完整台词隐形占位防抖，超长内容内部滚动；高频进度只在此收集。
 @Composable
 private fun SpeechText(full: String, visibleSpeech: StateFlow<String>) {
@@ -1028,30 +1265,60 @@ private fun RecordSheetContent(
     val entries = remember(history) {
         history.withIndex().filter { it.value.role != Role.system }
     }
-    LazyColumn(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(max = 520.dp)
-            .padding(horizontal = 20.dp),
+    val listState = rememberLazyListState()
+    Box {
+        LazyColumn(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 520.dp)
+                .padding(horizontal = 20.dp),
+            state = listState,
+        ) {
+            item {
+                RecordHeader(
+                    tokenEstimate = tokenEstimate,
+                    compressEnabled = compressEnabled,
+                    onCompress = onCompress,
+                )
+            }
+            if (entries.isEmpty()) {
+                item { RecordEmptyHint() }
+            }
+            items(entries, key = { it.index }) { (index, entry) ->
+                RecordEntryItem(
+                    entry = entry,
+                    userLabel = userLabel,
+                    onRewind = { onRewind(index, entry.content) },
+                )
+            }
+            item { Spacer(Modifier.navigationBarsPadding().height(16.dp)) }
+        }
+        ScrollToBottomButton(
+            listState = listState,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = 12.dp),
+        )
+    }
+}
+
+// 一键滚到最新记录；到底即隐藏，不遮挡末尾条目的回溯按钮。
+@Composable
+private fun ScrollToBottomButton(listState: LazyListState, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
+    // canScrollForward 由布局结果驱动，仅在跨越边界时重组本组件。
+    if (!listState.canScrollForward) return
+    FilledIconButton(
+        onClick = {
+            // 末项是底部留白，滚到它即被钳制在最大偏移处。
+            scope.launch { listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1) }
+        },
+        modifier = modifier,
     ) {
-        item {
-            RecordHeader(
-                tokenEstimate = tokenEstimate,
-                compressEnabled = compressEnabled,
-                onCompress = onCompress,
-            )
-        }
-        if (entries.isEmpty()) {
-            item { RecordEmptyHint() }
-        }
-        items(entries, key = { it.index }) { (index, entry) ->
-            RecordEntryItem(
-                entry = entry,
-                userLabel = userLabel,
-                onRewind = { onRewind(index, entry.content) },
-            )
-        }
-        item { Spacer(Modifier.navigationBarsPadding().height(16.dp)) }
+        Icon(
+            Icons.Filled.VerticalAlignBottom,
+            contentDescription = stringResource(R.string.record_scroll_to_bottom),
+        )
     }
 }
 
@@ -1109,6 +1376,9 @@ private fun RecordEmptyHint() {
     )
 }
 
+// 记录面板的一行；choice 为选项行，展示时加「选项」标签并用次要色。
+private data class RecordRow(val text: String, val choice: Boolean)
+
 @Composable
 private fun RecordEntryItem(entry: SessionEntry, userLabel: String, onRewind: () -> Unit) {
     when {
@@ -1155,10 +1425,20 @@ private fun RecordEntryItem(entry: SessionEntry, userLabel: String, onRewind: ()
         }
 
         entry.role == Role.assistant -> {
-            // SCENE/bgm 展示条目不属于台词，记录面板不展示。
-            val dialogs = remember(entry) {
-                DialogJsonParser.parseAll(entry.content).filterNot { presentationKind(it.name) != null }
+            // 展示条目里只有 CHOICE 属于用户可见内容；解析、拆选项与拼接一次做完，重组不重算。
+            val rows = remember(entry) {
+                DialogJsonParser.parseAll(entry.content).mapNotNull { dialog ->
+                    when (presentationKind(dialog.name)) {
+                        PresentationKind.Choice -> choiceOptions(dialog.speech)
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { RecordRow(it.joinToString(" / "), choice = true) }
+
+                        null -> RecordRow("${dialog.name}：${dialog.speech}", choice = false)
+                        else -> null
+                    }
+                }
             }
+            val choiceLabel = stringResource(R.string.record_choice_label)
             Column(Modifier.padding(vertical = 8.dp)) {
                 if (!entry.complete) {
                     Text(
@@ -1167,11 +1447,15 @@ private fun RecordEntryItem(entry: SessionEntry, userLabel: String, onRewind: ()
                         color = MaterialTheme.colorScheme.tertiary,
                     )
                 }
-                dialogs.forEach { dialog ->
+                rows.forEach { row ->
                     Text(
-                        "${dialog.name}：${dialog.speech}",
+                        if (row.choice) "$choiceLabel：${row.text}" else row.text,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = if (row.choice) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
                     )
                 }
             }

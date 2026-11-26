@@ -14,6 +14,8 @@ import com.dreemurr.shinsekai.update.UpdateCheckResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 sealed interface ModelsUiState {
@@ -35,9 +37,13 @@ data class UpdateUiState(
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
-    val settings = container.settingsRepository.allSettings
+    private val repo = container.settingsRepository
 
-    val themeMode = container.settingsRepository.themeMode
+    val themeMode = repo.themeMode
+
+    // 编辑草稿存 VM：旋转与切 Tab 都会重建组合，放 remember 会丢未保存改动；首帧直接取仓库现值，避免空表单闪动。
+    private val _form = MutableStateFlow(repo.allSettings.value ?: AllProviderSettings())
+    val form: StateFlow<AllProviderSettings> = _form.asStateFlow()
 
     private val _modelsState = MutableStateFlow<ModelsUiState>(ModelsUiState.Idle)
     val modelsState: StateFlow<ModelsUiState> = _modelsState.asStateFlow()
@@ -48,9 +54,22 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     private val _updateState = MutableStateFlow(UpdateUiState())
     val updateState: StateFlow<UpdateUiState> = _updateState.asStateFlow()
 
+    init {
+        // 仓库尚未读出（进程重建后直接回到设置页）时，等首次读出再一次性回填；已读出则首帧即仓库值。
+        if (repo.allSettings.value == null) {
+            viewModelScope.launch {
+                _form.value = repo.allSettings.filterNotNull().first()
+            }
+        }
+    }
+
+    fun update(transform: (AllProviderSettings) -> AllProviderSettings) {
+        _form.value = transform(_form.value)
+    }
+
     // 写盘完成后，UI 才提示已保存。
     suspend fun save(settings: AllProviderSettings) {
-        container.settingsRepository.save(
+        repo.save(
             settings.copy(
                 configs = settings.configs.mapValues { (_, config) ->
                     config.copy(
@@ -67,7 +86,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setThemeMode(mode: ThemeMode) {
         if (themeMode.value == mode) return
         viewModelScope.launch {
-            runCatching { container.settingsRepository.setThemeMode(mode) }
+            runCatching { repo.setThemeMode(mode) }
                 .onFailure { it.printStackTrace() }
         }
     }

@@ -16,14 +16,11 @@ class VoicesViewModel(private val container: AppContainer) : ViewModel() {
     private val _deleting = MutableStateFlow(false)
     val deleting: StateFlow<Boolean> = _deleting.asStateFlow()
 
-    /**
-     * 返回 null 表示删除完成；彻底删除云端失败时返回错误信息并保留本地卡片。
-     */
+    // 返回 null 表示删除完成；彻底删除云端失败时返回错误信息并保留本地卡片。
     suspend fun delete(card: VoiceCard, purge: Boolean): String? {
         if (_deleting.value) return null
         _deleting.value = true
         try {
-            // 云端删除失败即中止，保留本地卡片。
             if (purge) purgeRemote(card)?.let { return it }
             container.voiceCardRepository.delete(card.id)
             // 卡片已删，清理指向它的绑定关系。

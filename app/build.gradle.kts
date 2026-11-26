@@ -16,8 +16,8 @@ android {
         applicationId = "com.dreemurr.shinsekai"
         minSdk = 30
         targetSdk = 37
-        versionCode = 6
-        versionName = "v1.0.5"
+        versionCode = 7
+        versionName = "v1.0.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

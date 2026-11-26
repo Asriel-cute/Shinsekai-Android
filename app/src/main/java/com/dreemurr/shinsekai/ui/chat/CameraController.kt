@@ -12,6 +12,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.scale
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
@@ -234,11 +235,9 @@ class CameraController(private val context: Context) {
         val short = minOf(bitmap.width, bitmap.height)
         if (short <= target) return bitmap
         val scale = target.toFloat() / short
-        return Bitmap.createScaledBitmap(
-            bitmap,
+        return bitmap.scale(
             (bitmap.width * scale).roundToInt(),
             (bitmap.height * scale).roundToInt(),
-            true,
         )
     }
 

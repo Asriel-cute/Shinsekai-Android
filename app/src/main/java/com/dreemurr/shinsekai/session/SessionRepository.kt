@@ -2,9 +2,20 @@ package com.dreemurr.shinsekai.session
 
 import com.dreemurr.shinsekai.background.Background
 import com.dreemurr.shinsekai.character.Character
+import com.dreemurr.shinsekai.chat.CAMERA_ALIAS_NAME
+import com.dreemurr.shinsekai.chat.CAMERA_MARKER_NAME
+import com.dreemurr.shinsekai.chat.CAMERA_TOOL_NAME
+import com.dreemurr.shinsekai.chat.CAMERA_TOOL_RESULT
+import com.dreemurr.shinsekai.chat.CHOICE_ALIAS_NAME
+import com.dreemurr.shinsekai.chat.CHOICE_MARKER_NAME
 import com.dreemurr.shinsekai.chat.DialogJsonParser
 import com.dreemurr.shinsekai.chat.InputItem
+import com.dreemurr.shinsekai.chat.InputType
+import com.dreemurr.shinsekai.chat.PresentationKind
 import com.dreemurr.shinsekai.chat.Role
+import com.dreemurr.shinsekai.chat.STAT_ALIAS_NAME
+import com.dreemurr.shinsekai.chat.STAT_MARKER_NAME
+import com.dreemurr.shinsekai.chat.ThinkingPart
 import com.dreemurr.shinsekai.chat.presentationKind
 import com.dreemurr.shinsekai.template.TemplateGenerator
 import kotlinx.coroutines.CoroutineDispatcher
@@ -47,6 +58,8 @@ class SessionRepository(
         background: Background? = null,
         title: String? = null,
         chatType: ChatType = ChatType.TEXT,
+        statEnabled: Boolean = false,
+        choiceEnabled: Boolean = false,
     ): ChatSession = mutex.withLock {
         withContext(io) {
             val now = System.currentTimeMillis()
@@ -62,6 +75,8 @@ class SessionRepository(
                 playerId,
                 background,
                 videoChat = chatType == ChatType.VIDEO,
+                statEnabled = statEnabled,
+                choiceEnabled = choiceEnabled,
             )
             val session = ChatSession(
                 id = UUID.randomUUID().toString(),
@@ -70,6 +85,8 @@ class SessionRepository(
                 playerCharacterId = playerId,
                 voiceLanguages = voiceSnapshot,
                 cloudTtsEnabled = cloudTtsEnabled,
+                statEnabled = statEnabled,
+                choiceEnabled = choiceEnabled,
                 backgroundId = background?.id,
                 chatType = chatType,
                 scenario = scenarioText,
@@ -99,6 +116,8 @@ class SessionRepository(
         background: Background? = null,
         title: String? = null,
         chatType: ChatType = ChatType.TEXT,
+        statEnabled: Boolean = false,
+        choiceEnabled: Boolean = false,
     ): ChatSession? = update(id) { session ->
         val ids = characters.map { it.id }
         val idSet = ids.toSet()
@@ -112,6 +131,8 @@ class SessionRepository(
                 playerId,
                 background,
                 videoChat = chatType == ChatType.VIDEO,
+                statEnabled = statEnabled,
+                choiceEnabled = choiceEnabled,
             ),
         )
         val history = if (session.history.firstOrNull()?.role == Role.system) {
@@ -127,6 +148,8 @@ class SessionRepository(
             playerCharacterId = playerId,
             voiceLanguages = voiceSnapshot,
             cloudTtsEnabled = cloudTtsEnabled,
+            statEnabled = statEnabled,
+            choiceEnabled = choiceEnabled,
             backgroundId = background?.id,
             chatType = chatType,
             scenario = scenario.trim(),
@@ -215,33 +238,91 @@ class SessionRepository(
         }
     }
 
-    // 排除未完成条目与 SCENE/bgm/CAMERA 展示条目；仅最近一条带 image 的条目附帧路径，缺文件由 resolveImage 兜底降级。
-    fun buildInput(session: ChatSession): List<InputItem> {
+    // 续跑展开的工具配对与思考块仅本次请求生效、不落盘，后续回合按普通消息序列化；全历史解析较贵，统一切 Default。
+    suspend fun buildInput(
+        session: ChatSession,
+        cameraContinuation: Boolean = false,
+        cameraThoughtSignature: String? = null,
+        cameraThinking: List<ThinkingPart> = emptyList(),
+    ): List<InputItem> = withContext(Dispatchers.Default) {
         val lastImageIndex = session.history.indexOfLast { it.complete && it.image != null }
-        return session.history.mapIndexedNotNull { index, entry ->
+        val items = session.history.mapIndexedNotNull { index, entry ->
             if (!entry.complete) return@mapIndexedNotNull null
-            val content =
-                if (entry.role == Role.assistant) stripPresentationDialogs(entry.content) else entry.content
+            val content = if (entry.role == Role.assistant) {
+                stripPresentationDialogs(entry.content, session.statEnabled, session.choiceEnabled)
+            } else {
+                entry.content
+            }
             if (content.isEmpty()) return@mapIndexedNotNull null
             val imagePath = entry.image?.takeIf { index == lastImageIndex }
                 ?.let { name -> File(camDir(session.id), name).absolutePath }
-            InputItem(role = entry.role, content = content, imagePath = imagePath)
+            val text = if (entry.role == Role.user && entry.statusContext != null) {
+                entry.statusContext + "\n\n" + content
+            } else {
+                content
+            }
+            InputItem(role = entry.role, content = text, imagePath = imagePath)
+        }.toMutableList()
+        if (cameraContinuation) {
+            val last = items.lastOrNull()
+            if (last != null && last.role == Role.user && last.imagePath != null) {
+                val callId = "call_camera_${session.history.size}"
+                items.add(
+                    items.size - 1,
+                    InputItem(
+                        type = InputType.function_call,
+                        role = Role.assistant,
+                        content = "{}",
+                        callId = callId,
+                        toolName = CAMERA_TOOL_NAME,
+                        thoughtSignature = cameraThoughtSignature,
+                        thinking = cameraThinking.takeIf { it.isNotEmpty() },
+                    ),
+                )
+                items.add(
+                    items.size - 1,
+                    InputItem(
+                        type = InputType.function_call_output,
+                        role = Role.user,
+                        content = CAMERA_TOOL_RESULT,
+                        callId = callId,
+                        toolName = CAMERA_TOOL_NAME,
+                    ),
+                )
+            }
         }
+        items
     }
 
-    // 过滤后全部为展示条目时返回空串；无展示条目时保持原文，避免无谓重编码。
-    private fun stripPresentationDialogs(content: String): String {
-        if (!content.contains("SCENE") && !content.contains("bgm", ignoreCase = true) &&
-            !content.contains("场景") && !content.contains("CAMERA") && !content.contains("摄像头")
-        ) {
-            return content
-        }
+    // 与上游一致保留模型写的展示条目做格式强化（剥掉模型会逐渐不再输出）；只剥 CAMERA 合成标记与已关闭的 STAT/CHOICE，全剥返回空串、无可剥保持原文。
+    private fun stripPresentationDialogs(
+        content: String,
+        statEnabled: Boolean,
+        choiceEnabled: Boolean,
+    ): String {
+        // 原文预筛（剥离规则的超集）：带引号匹配排除台词正文里的同名词，避免每轮白解析；误命中只是多解析一条。
+        val maybeCamera = content.containsQuoted(CAMERA_MARKER_NAME) || content.containsQuoted(CAMERA_ALIAS_NAME)
+        val maybeStat = !statEnabled &&
+            (content.containsQuoted(STAT_MARKER_NAME) || content.containsQuoted(STAT_ALIAS_NAME))
+        val maybeChoice = !choiceEnabled &&
+            (content.containsQuoted(CHOICE_MARKER_NAME) || content.containsQuoted(CHOICE_ALIAS_NAME))
+        if (!maybeCamera && !maybeStat && !maybeChoice) return content
         val dialogs = DialogJsonParser.parseAll(content)
-        val kept = dialogs.filterNot { presentationKind(it.name) != null }
+        val kept = dialogs.filterNot { dialog ->
+            when (presentationKind(dialog.name)) {
+                PresentationKind.Camera -> true
+                PresentationKind.Stat -> !statEnabled
+                PresentationKind.Choice -> !choiceEnabled
+                else -> false
+            }
+        }
         if (kept.size == dialogs.size) return content
         if (kept.isEmpty()) return ""
         return DialogJsonParser.encode(kept)
     }
+
+    // 解析器只认双引号字段，保留名命中时原文里必有 "名字" 这一段。
+    private fun String.containsQuoted(name: String): Boolean = contains("\"$name\"")
 
     // 主控至少要有对手戏角色且在选角内；失效按未设置处理。视频会话与主控规则互斥，固定为空。
     private fun normalizePlayerId(

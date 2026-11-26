@@ -24,18 +24,16 @@ private val VERSION_REGEX = Regex("APP_VERSION\\s*=\\s*\"([^\"]+)\"")
 private val APK_URL_REGEX = Regex("APK_URL\\s*=\\s*\"([^\"]+)\"")
 
 sealed interface UpdateCheckResult {
-    /** 服务器版本严格大于本机；downloadUrl 为已解析成绝对地址的 APK 直链 */
+    // downloadUrl 为已解析成绝对地址的 APK 直链。
     data class Latest(val versionName: String, val downloadUrl: String) : UpdateCheckResult
 
-    /** 服务器版本等于或低于本机 */
     data object UpToDate : UpdateCheckResult
 
-    /** 网络、HTTP 或解析失败；message 为中文原因 */
+    // message 为中文原因。
     data class Failure(val message: String) : UpdateCheckResult
 }
 
-// 检查更新：GET 下载页 HTML，正则提取手动维护区两个变量，版本按「.」分段数字比较。
-// 服务器侧零改动，发版流程（覆盖 APK + 改 APP_VERSION）保持不变。
+// 检查更新：GET 下载页 HTML，正则提取手动维护区两个变量比较版本；服务器侧零改动，发版仍是覆盖 APK + 改 APP_VERSION。
 class UpdateRepository {
 
     private val client = OkHttpClient.Builder()

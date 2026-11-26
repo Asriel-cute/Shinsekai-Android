@@ -171,7 +171,6 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                 OnboardingPageContent(OnboardingPages[index])
             }
 
-            // 页码圆点。
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -611,7 +610,6 @@ private fun VoiceArt() {
 
 // ============ 示意图通用小件 ============
 
-// 面板：示意图内的白色圆角卡片。
 @Composable
 private fun MockPanel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Surface(
@@ -624,7 +622,7 @@ private fun MockPanel(modifier: Modifier = Modifier, content: @Composable () -> 
     }
 }
 
-// 骨架条：宽度由调用方给定，示意文本占位。
+// 宽度由调用方给定。
 @Composable
 private fun SkeletonBar(modifier: Modifier = Modifier) {
     Box(
@@ -637,7 +635,6 @@ private fun SkeletonBar(modifier: Modifier = Modifier) {
     )
 }
 
-// 胶囊：选中用主题色，未选中描边。
 @Composable
 private fun MockPill(text: String, selected: Boolean) {
     Surface(
@@ -668,7 +665,7 @@ private fun MockPill(text: String, selected: Boolean) {
     }
 }
 
-// 按钮：宽度须由调用方给定（weight/fillMaxWidth/width），文字水平居中。
+// 宽度须由调用方给定（weight/fillMaxWidth/width）。
 @Composable
 private fun MockButton(text: String, filled: Boolean, modifier: Modifier) {
     Surface(
@@ -703,7 +700,6 @@ private fun MockButton(text: String, filled: Boolean, modifier: Modifier) {
     }
 }
 
-// 字段：标签 + 骨架条。
 @Composable
 private fun MockField(label: String) {
     MockPanel(Modifier.fillMaxWidth()) {
@@ -721,7 +717,6 @@ private fun MockField(label: String) {
     }
 }
 
-// 勾选框。
 @Composable
 private fun MockCheckBox(checked: Boolean) {
     Box(
@@ -752,7 +747,6 @@ private fun MockCheckBox(checked: Boolean) {
     }
 }
 
-// 头像：主题色圆形 + 人像图标。
 @Composable
 private fun MockAvatar() {
     Box(
@@ -770,7 +764,6 @@ private fun MockAvatar() {
     }
 }
 
-// 流程箭头。
 @Composable
 private fun MockArrowDown() {
     Icon(

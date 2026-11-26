@@ -60,6 +60,7 @@ fun VoiceCardEditScreen(
         },
     )
     val form by vm.form.collectAsStateWithLifecycle()
+    val keyLoaded by vm.keyLoaded.collectAsStateWithLifecycle()
     val voicesState by vm.voicesState.collectAsStateWithLifecycle()
     var showPicker by remember { mutableStateOf(false) }
 
@@ -144,6 +145,7 @@ fun VoiceCardEditScreen(
                         showPicker = true
                         vm.fetchVoices()
                     },
+                    enabled = keyLoaded,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -165,7 +167,7 @@ fun VoiceCardEditScreen(
                         }
                     }
                 },
-                enabled = form.valid,
+                enabled = form.valid && keyLoaded,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,

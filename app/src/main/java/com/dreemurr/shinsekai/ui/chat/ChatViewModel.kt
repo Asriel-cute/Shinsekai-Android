@@ -7,13 +7,20 @@ import androidx.camera.view.PreviewView
 import com.dreemurr.shinsekai.R
 import com.dreemurr.shinsekai.background.Background
 import com.dreemurr.shinsekai.character.Character
+import com.dreemurr.shinsekai.chat.CAMERA_ALIAS_NAME
+import com.dreemurr.shinsekai.chat.CAMERA_FRAME_TEXT
+import com.dreemurr.shinsekai.chat.CAMERA_MARKER_NAME
 import com.dreemurr.shinsekai.chat.ChatStreamEvent
 import com.dreemurr.shinsekai.chat.ContextCompressor
 import com.dreemurr.shinsekai.chat.Dialog
 import com.dreemurr.shinsekai.chat.DialogJsonParser
 import com.dreemurr.shinsekai.chat.PresentationKind
 import com.dreemurr.shinsekai.chat.Role
+import com.dreemurr.shinsekai.chat.StatItem
+import com.dreemurr.shinsekai.chat.StatPayload
+import com.dreemurr.shinsekai.chat.ThinkingPart
 import com.dreemurr.shinsekai.chat.TokenEstimator
+import com.dreemurr.shinsekai.chat.choiceOptions
 import com.dreemurr.shinsekai.chat.presentationKind
 import com.dreemurr.shinsekai.di.AppContainer
 import com.dreemurr.shinsekai.session.ChatSession
@@ -89,6 +96,10 @@ class ChatViewModel(
         val sprite: SpriteView? = null,
         // 当前场景背景图；null=无背景包或尚无场景。
         val backgroundImage: File? = null,
+        // 数值面板：只来自模型 STAT 条目，整表替换；空=不显示、不注入。
+        val stats: List<StatItem> = emptyList(),
+        // 待选选项：最近一条 CHOICE 的拆分结果；点击回填输入框，发送或新一轮开始时清空。
+        val choices: List<String> = emptyList(),
         val error: String? = null,
         val notConfigured: Boolean = false,
         // 主控角色名；仅用于输入提示与记录面板标签。
@@ -98,7 +109,7 @@ class ChatViewModel(
         val tokenEstimate: Int = 0,
         val showCompressConfirm: Boolean = false,
         val compressing: Boolean = false,
-        // 回溯后回填输入框的一次性草稿。
+        // 回溯或点击选项后回填输入框的一次性草稿。
         val pendingDraft: String? = null,
         // 视频会话：悬浮摄像头窗、画面变化/CAMERA 请求发帧。
         val videoChat: Boolean = false,
@@ -112,6 +123,10 @@ class ChatViewModel(
     // 高频打字更新仅重组台词组件。
     private val _visibleSpeech = MutableStateFlow("")
     val visibleSpeech = _visibleSpeech.asStateFlow()
+
+    // 思考内容流式展示：同样独立 StateFlow，只留尾部，避免长文本反复重排。
+    private val _thinking = MutableStateFlow("")
+    val thinking = _thinking.asStateFlow()
 
     // 一次性提示（语音失败/缺译文汇总等）。
     private val _toast = MutableStateFlow<String?>(null)
@@ -142,6 +157,14 @@ class ChatViewModel(
     // 会话绑定的背景包；null=无背景，SCENE/bgm 条目按编号切换场景与音乐。
     private var sessionBackground: Background? = null
 
+    // 模型确立且素材存在的场景/BGM 编号（1 基）；null=无记录不写状态块，回落默认开场不算记录，发送时不回扫历史。
+    private var sceneNumber: Int? = null
+    private var bgmNumber: Int? = null
+
+    // 数值状态/对话选项开关；关闭时对应展示条目静默忽略，不注入、不弹出。
+    private var statEnabled = false
+    private var choiceEnabled = false
+
     // 视频会话状态：悬浮窗与 CAMERA 请求仅在 VIDEO 会话生效。
     private var videoChat = false
     private var cameraController: CameraController? = null
@@ -157,6 +180,16 @@ class ChatViewModel(
     // 本轮出现 CAMERA 画面请求：待可见台词播空后发帧；cameraCut 后到达的台词按打断语义丢弃。
     private var cameraRequested = false
     private var cameraCut = false
+
+    // CAMERA 经工具调用到达（区别于旧文本保留名）：续跑请求据此重构工具配对；thoughtSignature 仅 Gemini 需要。
+    private var cameraViaTool = false
+    private var cameraThoughtSignature: String? = null
+
+    // 本段收到的可回放思考块（Anthropic thinking / Responses reasoning），续跑请求原样带回。
+    private var cameraThinking: List<ThinkingPart> = emptyList()
+
+    // 本逻辑轮（含续跑）累计画面请求次数，封顶防连环发帧；用户新发送时清零。
+    private var cameraCountThisTurn = 0
 
     // 会话期内是否已播放过 BGM，用于重进/回溯后判断是否回落到第 1 首。
     private var bgmStarted = false
@@ -257,6 +290,8 @@ class ChatViewModel(
         videoChat = session.chatType == ChatType.VIDEO
         sessionBackground = session.backgroundId
             ?.let { id -> backgroundRepo.backgrounds.value.firstOrNull { it.id == id } }
+        statEnabled = session.statEnabled
+        choiceEnabled = session.choiceEnabled
         val byId = characterRepo.characters.value.associateBy { it.id }
         val playerName = session.playerCharacterId?.let(byId::get)?.name
         _state.update {
@@ -265,6 +300,9 @@ class ChatViewModel(
                 playerName = playerName,
                 history = session.history,
                 videoChat = videoChat,
+                // 开关关掉即下线对应展示，历史里的旧条目不再恢复。
+                stats = if (statEnabled) it.stats else emptyList(),
+                choices = if (choiceEnabled) it.choices else emptyList(),
             )
         }
     }
@@ -273,48 +311,104 @@ class ChatViewModel(
     private fun currentSession(): ChatSession? =
         sessionRepo.sessions.value.firstOrNull { it.id == sessionId }
 
-    // 全量重建 LLM input 并估算 token；仅在进入页面/回溯/压缩/回合结束时调用。
-    private fun refreshTokenEstimate() {
+    // 仅在进入页面/回溯/压缩/回合结束时调用；全历史解析与逐字符估算较贵，放 Default 避免阻塞主线程。
+    private suspend fun refreshTokenEstimate() {
         val session = currentSession() ?: return
-        _state.update {
-            it.copy(tokenEstimate = TokenEstimator.estimate(sessionRepo.buildInput(session)))
+        val estimate = withContext(Dispatchers.Default) {
+            TokenEstimator.estimate(sessionRepo.buildInput(session))
         }
+        _state.update { it.copy(tokenEstimate = estimate) }
     }
 
-    // 无任何 SCENE/bgm 记录时按背景包默认开场：场景 1 + BGM 1。
+    // 无任何 SCENE/bgm 记录时按默认开场（场景 1 + BGM 1）；回落不算模型确立过的状态，不记编号。
     private fun initPresentationDefaults() {
         if (_state.value.backgroundImage == null) applyScene(0)
         if (!bgmStarted) applyBgm(0)
     }
 
-    // SCENE/bgm 展示条目：按编号切换背景图/BGM；越界或缺素材静默忽略。
+    // 发送前渲染当前状态块（随 entry 落盘、仅 buildInput 前置）；只报告模型确立过的状态，任一类无记录就不写该行以免误导开场已设置，全空不注入。
+    private fun statusContextBlock(): String? {
+        val scene = sceneNumber
+        val bgm = bgmNumber
+        // 开关关闭时 applySession 已清空面板，这里直接用运行时状态。
+        val stats = _state.value.stats
+        if (scene == null && bgm == null && stats.isEmpty()) return null
+        val background = sessionBackground
+        return buildString {
+            append("[当前状态]\n")
+            scene?.let { appendIndexedLine("场景", it, background?.bgTags) }
+            bgm?.let { appendIndexedLine("BGM", it, background?.bgmTags) }
+            // 数值行与 STAT 输出同格式，模型可直接在旧列表上改。
+            if (stats.isNotEmpty()) {
+                append("数值（图标|名称|值|上限）：\n")
+                for (stat in stats) {
+                    append(stat.icon).append('|').append(stat.label).append('|').append(stat.valueText)
+                    stat.maxText?.let { append('|').append(it) }
+                    append('\n')
+                }
+            }
+            append("[/当前状态]")
+        }
+    }
+
+    // 「标签：编号（说明）」一行；标签行号与提示词同口径：整段 trim 后再按行取，前导空行不参与编号。
+    private fun StringBuilder.appendIndexedLine(label: String, number: Int, tags: String?) {
+        append(label).append('：').append(number)
+        tags?.trim()?.lines()?.getOrNull(number - 1)?.trim()?.takeIf { it.isNotEmpty() }
+            ?.let { append('（').append(it).append('）') }
+        append('\n')
+    }
+
+    // 越界、缺素材、解析不出内容或开关关闭时一律静默忽略。
     private fun applyPresentation(dialog: Dialog) {
-        val number = dialog.sprite.trim().toIntOrNull() ?: return
-        if (number < 1) return
-        when (presentationKind(dialog.name)) {
-            PresentationKind.Scene -> applyScene(number - 1)
-            PresentationKind.Bgm -> applyBgm(number - 1)
+        when (val kind = presentationKind(dialog.name)) {
+            PresentationKind.Scene, PresentationKind.Bgm -> {
+                val number = dialog.sprite.trim().toIntOrNull() ?: return
+                if (number < 1) return
+                // 切换成功才记编号：状态块只报告实际生效过的场景/BGM。
+                if (kind == PresentationKind.Scene) {
+                    if (applyScene(number - 1)) sceneNumber = number
+                } else {
+                    if (applyBgm(number - 1)) bgmNumber = number
+                }
+            }
+
+            PresentationKind.Stat -> if (statEnabled) applyStat(dialog)
+            PresentationKind.Choice -> if (choiceEnabled) applyChoice(dialog)
             // CAMERA 请求在 enqueueDialog 单独处理，回放时无副作用。
-            PresentationKind.Camera -> Unit
-            null -> Unit
+            PresentationKind.Camera, null -> Unit
         }
     }
 
-    // 切换场景图；无背景包或素材缺失时保持原画面。
-    private fun applyScene(index: Int) {
-        val background = sessionBackground ?: return
-        backgroundRepo.sceneImage(background.id, index)?.let { file ->
-            _state.update { it.copy(backgroundImage = file) }
+    // STAT 整表替换：解析出条目才替换，speech 为空视为清空，解析不出则保持原样。
+    private fun applyStat(dialog: Dialog) {
+        val stats = StatPayload.parse(dialog.speech)
+        when {
+            stats.isNotEmpty() -> _state.update { it.copy(stats = stats) }
+            dialog.speech.isBlank() -> _state.update { it.copy(stats = emptyList()) }
         }
     }
 
-    // 切换 BGM；无背景包或素材缺失时保持原曲目。
-    private fun applyBgm(index: Int) {
-        val background = sessionBackground ?: return
-        backgroundRepo.bgmFile(background.id, index)?.let { file ->
-            bgmStarted = true
-            bgmPlayer.play(file)
-        }
+    // CHOICE 拆出选项即弹出；无有效选项时收起。
+    private fun applyChoice(dialog: Dialog) {
+        _state.update { it.copy(choices = choiceOptions(dialog.speech)) }
+    }
+
+    // 切换场景图；无背景包或素材缺失时保持原画面。返回是否实际切换。
+    private fun applyScene(index: Int): Boolean {
+        val background = sessionBackground ?: return false
+        val file = backgroundRepo.sceneImage(background.id, index) ?: return false
+        _state.update { it.copy(backgroundImage = file) }
+        return true
+    }
+
+    // 切换 BGM；无背景包或素材缺失时保持原曲目。返回是否实际切换。
+    private fun applyBgm(index: Int): Boolean {
+        val background = sessionBackground ?: return false
+        val file = backgroundRepo.bgmFile(background.id, index) ?: return false
+        bgmStarted = true
+        bgmPlayer.play(file)
+        return true
     }
 
     fun send(text: String) {
@@ -324,7 +418,10 @@ class ChatViewModel(
             // 播放中发送即打断：历史只保留已播出的 dialog，未播放部分一并丢弃。
             dropPlayback()
             trimUnplayedReply()
-            sessionRepo.appendEntry(sessionId, SessionEntry(role = Role.user, content = trimmed))
+            sessionRepo.appendEntry(
+                sessionId,
+                SessionEntry(role = Role.user, content = trimmed, statusContext = statusContextBlock()),
+            )
             startStream()
         }
     }
@@ -423,6 +520,11 @@ class ChatViewModel(
         _state.update { it.copy(pendingDraft = null) }
     }
 
+    // 点击选项：收起按钮并把选项文本回填输入框，改不改、发不发由用户决定。
+    fun pickChoice(text: String) {
+        _state.update { it.copy(choices = emptyList(), pendingDraft = text) }
+    }
+
     fun requestCompress() {
         _state.update { it.copy(showCompressConfirm = true) }
     }
@@ -480,7 +582,7 @@ class ChatViewModel(
     }
 
     // 截断/压缩后重放剩余历史，恢复最后一句、立绘记忆与场景/BGM 状态。
-    private fun restoreFromHistory() {
+    private suspend fun restoreFromHistory() {
         // 历史被重写，旧自动推进调度一并作废。
         cancelAutoAdvance()
         spriteMemory.clear()
@@ -489,6 +591,8 @@ class ChatViewModel(
         enqueuedDialogs = 0
         playedDialogs.clear()
         bgmStarted = false
+        sceneNumber = null
+        bgmNumber = null
         _state.update {
             it.copy(
                 line = null,
@@ -497,6 +601,8 @@ class ChatViewModel(
                 queueSize = 0,
                 error = null,
                 backgroundImage = null,
+                stats = emptyList(),
+                choices = emptyList(),
             )
         }
         _visibleSpeech.value = ""
@@ -672,11 +778,17 @@ class ChatViewModel(
                 val filename = sessionRepo.saveCameraImage(sessionId, bytes)
                 sessionRepo.appendEntry(
                     sessionId,
-                    SessionEntry(role = Role.user, content = CAMERA_FRAME_TEXT, image = filename),
+                    SessionEntry(
+                        role = Role.user,
+                        content = CAMERA_FRAME_TEXT,
+                        image = filename,
+                        statusContext = statusContextBlock(),
+                    ),
                 )
                 lastFrameSentAt = System.currentTimeMillis()
                 controller.resetBaseline()
-                startStream()
+                // 同轮闭环：续跑请求携带工具配对，台词队列与播放状态随 startStream 常规重置。
+                startStream(cameraContinuation = true)
             } finally {
                 // startStream 已同步置 streaming，守卫随之接管。
                 cameraSending = false
@@ -699,7 +811,13 @@ class ChatViewModel(
         return false
     }
 
-    private fun startStream() {
+    private fun startStream(cameraContinuation: Boolean = false) {
+        // 续跑请求需要上一段的工具元数据与思考块，先于重置取出；文本保留名路径不重构工具配对。
+        val continuation = cameraContinuation && cameraViaTool
+        val continuationSignature = if (continuation) cameraThoughtSignature else null
+        val continuationThinking = if (continuation) cameraThinking else emptyList()
+        if (!cameraContinuation) cameraCountThisTurn = 0
+        val cameraBudget = (MAX_CAMERA_PER_TURN - cameraCountThisTurn).coerceAtLeast(0)
         streamJob?.cancel()
         chatRepo.cancel() // 兜底清理残留连接
         advanceJob?.cancel()
@@ -716,6 +834,10 @@ class ChatViewModel(
         parsedAnyDialog = false
         cameraRequested = false
         cameraCut = false
+        cameraViaTool = false
+        cameraThoughtSignature = null
+        cameraThinking = emptyList()
+        _thinking.value = ""
         cancelAutoAdvance()
         _state.update {
             it.copy(
@@ -724,6 +846,8 @@ class ChatViewModel(
                 error = null,
                 queueSize = 0,
                 synthesizing = false,
+                // 新一轮开始即收起上一轮选项，数值面板跨轮保留。
+                choices = emptyList(),
             )
         }
         // 串行合成消费者：逐条请求云 TTS，避免并发触发限流。
@@ -736,7 +860,9 @@ class ChatViewModel(
             }
             sessionVoiceLanguages = session.voiceLanguages
             val settings = container.settingsRepository.settings.value
-            chatRepo.getChatStream(settings, sessionRepo.buildInput(session))
+            // buildInput 内部已切 Default；SSE 读取本身已在 IO。
+            val input = sessionRepo.buildInput(session, continuation, continuationSignature, continuationThinking)
+            chatRepo.getChatStream(settings, input, cameraTool = videoChat, cameraBudget = cameraBudget)
                 .collect(::handleEvent)
         }
     }
@@ -759,13 +885,30 @@ class ChatViewModel(
                 }
             }
 
+            is ChatStreamEvent.Thinking -> {
+                // 只留尾部：长思维链不整段重排，展示随流滚动。
+                _thinking.value = (_thinking.value + event.text).takeLast(THINKING_DISPLAY_CHARS)
+            }
+
+            is ChatStreamEvent.CameraRequested -> {
+                // 工具命中即本段终点：计入有效内容（纯 CAMERA 段不判格式异常），其后文本已在仓库层丢弃。
+                parsedAnyDialog = true
+                cameraViaTool = true
+                cameraThoughtSignature = event.thoughtSignature
+                cameraCountThisTurn++
+                cameraRequested = true
+                cameraCut = true
+            }
+
             is ChatStreamEvent.Completed -> {
                 terminal = Terminal.Done
+                // 本段思考块留给续跑请求原样带回（Anthropic 开思考时必需）。
+                cameraThinking = event.thinking
                 // 未解析出 dialog 时按格式错误保存残片。
                 persistAssistant(event.rawText, complete = parsedAnyDialog)
                 finishStream(if (parsedAnyDialog) null else "回复格式异常，未解析出对话内容")
-                // CAMERA-only 轮（无可上屏台词）：队列已空，无需等待点击直接发帧。
-                if (cameraRequested && queue.isEmpty()) {
+                // 仅播放真正空闲（CAMERA-only 轮）才立即发帧；末条仍在打字/合成/待上屏时保留请求交正常结算，防吞请求与跳台词。
+                if (cameraRequested && queue.isEmpty() && playbackIdle()) {
                     cameraRequested = false
                     _state.update { it.copy(phase = Phase.WaitingInput) }
                     sendCameraFrame(respectCooldown = false)
@@ -788,7 +931,7 @@ class ChatViewModel(
     }
 
     // 未播放任何 dialog 时立即报错，否则留待队列播完；回合结束统一刷新 token 估算。
-    private fun finishStream(error: String?) {
+    private suspend fun finishStream(error: String?) {
         _state.update {
             if (error == null) it.copy(streaming = false)
             else it.copy(streaming = false, phase = Phase.Error, error = error)
@@ -800,14 +943,19 @@ class ChatViewModel(
     private fun enqueueDialog(dialog: Dialog) {
         // CAMERA 即本轮输出终点：记录请求即可，其后到达的台词按打断语义直接丢弃。
         if (cameraCut) return
-        if (presentationKind(dialog.name) == PresentationKind.Camera) {
-            cameraRequested = true
-            cameraCut = true
+        val kind = presentationKind(dialog.name)
+        if (kind == PresentationKind.Camera) {
+            // 旧文本保留名兼容路径；与工具路径共用次数上限。
+            if (cameraCountThisTurn < MAX_CAMERA_PER_TURN) {
+                cameraCountThisTurn++
+                cameraRequested = true
+                cameraCut = true
+            }
             return
         }
         enqueuedDialogs++
-        // SCENE/bgm 展示条目只切换场景/BGM，不参与台词展示与语音。
-        if (presentationKind(dialog.name) != null) {
+        // SCENE/bgm/STAT/CHOICE 展示条目只改状态或弹选项，不参与台词展示与语音。
+        if (kind != null) {
             queue.addLast(QueuedDialog(dialog, presentation = true))
             return
         }
@@ -939,6 +1087,13 @@ class ChatViewModel(
         autoAdvanceJob = null
     }
 
+    // 播放是否真正空闲：无打字/合成，且无待执行的推进与自动推进调度。
+    private fun playbackIdle(): Boolean {
+        val snapshot = _state.value
+        return !snapshot.typing && !snapshot.synthesizing &&
+            advanceJob?.isActive != true && autoAdvanceJob?.isActive != true
+    }
+
     private fun advanceInternal() {
         // 任何推进（点击/自动到点）都先作废旧自动调度，避免双重推进。
         cancelAutoAdvance()
@@ -999,22 +1154,27 @@ class ChatViewModel(
             if (videoChat) {
                 // 确有语音（云音频或本地录音）才等待播完，否则信号无持有者会被直接丢弃。
                 val waitVoice = voiceDone?.takeIf { audio != null || applied.voiceStarted }
-                // 云语音与本地录音按实际播完走，纯文字只按字数停留。
-                scheduleAutoAdvance(applied.line.speech, waitVoice)
+                // 云语音念的就是台词，播完加尾停即推进；本地录音与纯文字仍按字数停留。
+                scheduleAutoAdvance(applied.line.speech, waitVoice, followVoice = audio != null)
             }
         }
     }
 
-    // 视频会话自动推进：等语音播完与字数停留的较晚者（停留公式恒 ≥ 打字时长）；点击/打断统一取消。
+    // 跟随云语音时等播完加尾停（且打字已结束）；本地录音/纯文字等播完与字数停留的较晚者；点击/打断统一取消。
     private fun scheduleAutoAdvance(
         speech: String,
         voiceDone: CompletableDeferred<Unit>?,
+        followVoice: Boolean,
     ) {
         autoAdvanceJob?.cancel()
         autoAdvanceJob = viewModelScope.launch {
             coroutineScope {
-                voiceDone?.let { done -> launch { done.await() } }
-                delay(autoHoldMillis(speech))
+                launch {
+                    voiceDone?.let { it.await() }
+                    delay(if (followVoice) VOICE_TAIL_MILLIS else autoHoldMillis(speech))
+                }
+                // 合成文本短于屏幕台词时语音可能先于打字结束，兜底等打字完再切。
+                if (followVoice) launch { _state.first { !it.typing } }
             }
             // 先摘除自身再推进，避免 advanceInternal 内的统一取消作用到自己。
             autoAdvanceJob = null
@@ -1022,7 +1182,7 @@ class ChatViewModel(
         }
     }
 
-    // 无语音台词的动态停留：按字数估算（打字 40ms/字 + 阅读约 400ms/字）加缓冲，钳制区间防呆滞。
+    // 无云语音台词的动态停留：按字数估算（打字 40ms/字 + 阅读约 400ms/字）加缓冲，钳制区间防呆滞。
     private fun autoHoldMillis(speech: String): Long =
         (speech.length * 400L + 800L).coerceIn(2_500L, 15_000L)
 
@@ -1107,13 +1267,28 @@ class ChatViewModel(
         return true
     }
 
-    // 历史回放不播语音、不打字，仅重建行、立绘记忆与场景/BGM 状态。
-    private fun replayHistory(session: ChatSession) {
+    // 历史回放不播语音、不打字，仅重建行与各项状态；长历史解析较贵放 Default，状态切换等副作用留在主线程。
+    private suspend fun replayHistory(session: ChatSession) {
+        val parsed = withContext(Dispatchers.Default) {
+            session.history
+                .filter { it.complete }
+                .map { entry ->
+                    entry.role to if (entry.role == Role.assistant) {
+                        DialogJsonParser.parseAll(entry.content)
+                    } else {
+                        emptyList()
+                    }
+                }
+        }
         var lastApplied: AppliedDialog? = null
         var sprite = _state.value.sprite
-        for (entry in session.history) {
-            if (!entry.complete || entry.role != Role.assistant) continue
-            for (dialog in DialogJsonParser.parseAll(entry.content)) {
+        for ((role, dialogs) in parsed) {
+            // 用户已回应过的选项不再弹出；数值状态不受后续用户消息影响。
+            if (role == Role.user) {
+                _state.update { it.copy(choices = emptyList()) }
+                continue
+            }
+            for (dialog in dialogs) {
                 if (presentationKind(dialog.name) != null) {
                     applyPresentation(dialog)
                     continue
@@ -1158,13 +1333,21 @@ class ChatViewModel(
     }
 
     private suspend fun persistAssistant(rawText: String, complete: Boolean) {
-        if (rawText.isBlank()) return
-        sessionRepo.appendAssistantResult(sessionId, truncateAfterCamera(rawText), complete)
+        // 工具路径原文不含 CAMERA 条目：落盘时合成标记条目，保持记录/回放形状与文本路径一致。
+        val content = if (cameraViaTool) {
+            DialogJsonParser.encode(
+                DialogJsonParser.parseAll(rawText) + Dialog(name = CAMERA_MARKER_NAME, sprite = "-1"),
+            )
+        } else {
+            truncateAfterCamera(rawText)
+        }
+        if (content.isBlank()) return
+        sessionRepo.appendAssistantResult(sessionId, content, complete)
     }
 
     // CAMERA 即本轮输出终点：保留 CAMERA 及其之前的条目（标记随记录持久化），之后的台词丢弃。
     private fun truncateAfterCamera(rawText: String): String {
-        if (!rawText.contains("CAMERA") && !rawText.contains("摄像头")) return rawText
+        if (!rawText.contains(CAMERA_MARKER_NAME) && !rawText.contains(CAMERA_ALIAS_NAME)) return rawText
         val dialogs = DialogJsonParser.parseAll(rawText)
         val cameraIndex = dialogs.indexOfFirst { presentationKind(it.name) == PresentationKind.Camera }
         if (cameraIndex < 0) return rawText
@@ -1172,7 +1355,13 @@ class ChatViewModel(
     }
 
     companion object {
-        // 摄像头帧消息文案；与提示词里向模型描述的图像标记一致。
-        private const val CAMERA_FRAME_TEXT = "（摄像头画面）"
+        // 单逻辑轮（含 CAMERA 续跑）画面请求上限；超限的调用静默忽略。
+        private const val MAX_CAMERA_PER_TURN = 3
+
+        // 视频会话云语音播完后的尾停：台词跟随语音推进，不再叠加字数停留。
+        private const val VOICE_TAIL_MILLIS = 500L
+
+        // 思维链展示只保留最近这些字符，限制单次文本重排规模。
+        private const val THINKING_DISPLAY_CHARS = 1000
     }
 }

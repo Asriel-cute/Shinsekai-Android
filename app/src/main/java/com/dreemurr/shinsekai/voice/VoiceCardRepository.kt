@@ -27,9 +27,10 @@ class VoiceCardRepository(
 
     fun newCardId(): String = UUID.randomUUID().toString()
 
-    fun encryptKey(plain: String): String = cipher.encrypt(plain)
+    // Keystore 加解密为阻塞调用，统一切 IO，调用方无需再包 withContext。
+    suspend fun encryptKey(plain: String): String = withContext(io) { cipher.encrypt(plain) }
 
-    fun decryptKey(card: VoiceCard): String = cipher.decrypt(card.apiKeyCipher)
+    suspend fun decryptKey(card: VoiceCard): String = withContext(io) { cipher.decrypt(card.apiKeyCipher) }
 
     // 仅启动时调用；损坏文件回退为空列表，未知服务商条目跳过。
     suspend fun load() = mutex.withLock {
@@ -58,7 +59,6 @@ class VoiceCardRepository(
         }
     }
 
-    // 先写临时文件再原子替换。
     private fun persist(cards: List<VoiceCard>) {
         writeTextAtomic(file, appJson.encodeToString(voiceCardListSerializer, cards))
     }

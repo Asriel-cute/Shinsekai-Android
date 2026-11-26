@@ -19,6 +19,10 @@ data class ChatSession(
     val voiceLanguages: Map<String, String> = emptyMap(),
     // 会话级云语音开关；关闭后绑定卡片不再合成，回退本地立绘语音。
     val cloudTtsEnabled: Boolean = true,
+    // 数值状态（STAT）开关；开启才加数值规则、显示面板并随每轮消息注入。默认关闭。
+    val statEnabled: Boolean = false,
+    // 对话选项（CHOICE）开关；开启才加选项规则并弹出待选选项。默认关闭。
+    val choiceEnabled: Boolean = false,
     // 绑定的背景包 id；空=无背景。指向已删除的包时按无背景处理。
     val backgroundId: String? = null,
     // 聊天类型；旧存档缺字段回落普通聊天。
@@ -29,7 +33,7 @@ data class ChatSession(
     val updatedAt: Long,
 )
 
-// content 保存原文；complete=false 残片可查看但不进请求；summary=true 为压缩摘要；image 非空为摄像头帧（仅最近一帧参与请求）。
+// complete=false 为残片（可查看、不进请求）；summary 为摘要；image 为帧文件名（仅最近一帧进请求）；statusContext 只进请求，面板与回溯用 content。
 @Serializable
 data class SessionEntry(
     val role: Role,
@@ -37,4 +41,5 @@ data class SessionEntry(
     val complete: Boolean = true,
     val summary: Boolean = false,
     val image: String? = null,
+    val statusContext: String? = null,
 )

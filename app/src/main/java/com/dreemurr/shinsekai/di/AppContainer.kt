@@ -42,7 +42,7 @@ class AppContainer(context: Context) {
     val ttsRepository = TtsRepository()
     val updateRepository = UpdateRepository()
 
-    /** 仅由 MainApplication 启动流程调用 */
+    // 仅由 MainApplication 启动流程调用。
     fun markReady() {
         _ready.value = true
     }

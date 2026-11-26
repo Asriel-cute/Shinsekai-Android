@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -43,7 +44,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -88,33 +88,22 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
             initializer { SettingsViewModel(container) }
         },
     )
-    val saved by vm.settings.collectAsStateWithLifecycle()
+    val form by vm.form.collectAsStateWithLifecycle()
     val modelsState by vm.modelsState.collectAsStateWithLifecycle()
     val testState by vm.testState.collectAsStateWithLifecycle()
     val themeMode by vm.themeMode.collectAsStateWithLifecycle()
     val updateState by vm.updateState.collectAsStateWithLifecycle()
 
-    // 只初始化一次；已就绪时首帧直接使用仓库数据，避免空表单闪动与浮动标签动画掉帧。
-    var form by remember { mutableStateOf(saved) }
-    var initialized by remember { mutableStateOf(saved != AllProviderSettings()) }
     var showKey by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
     // 检查到新版本后展示下载弹窗；null 表示无弹窗。
     var pendingUpdate by remember { mutableStateOf<UpdateCheckResult.Latest?>(null) }
 
-    LaunchedEffect(saved) {
-        // 跳过仓库尚未加载时的默认占位值。
-        if (!initialized && saved != AllProviderSettings()) {
-            form = saved
-            initialized = true
-        }
-    }
-
     val activeProvider = form.activeProvider
     val config = form.configs.getValue(activeProvider)
 
     fun updateConfig(provider: LlmProvider, transform: (ProviderConfig) -> ProviderConfig) {
-        form = form.withConfig(provider, transform)
+        vm.update { it.withConfig(provider, transform) }
     }
 
     // Toast 只用 context 本体；文案仍按约定经 stringResource 获取。
@@ -128,12 +117,14 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
     val updateFailedFormat = stringResource(R.string.update_check_failed_format)
     val scope = rememberCoroutineScope()
 
-    Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { Text(stringResource(R.string.tab_settings)) })
-
+    // Scaffold 提供不透明背景：Tab 滑入时避免透出下层正在滑出的旧页。
+    Scaffold(
+        topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_settings)) }) },
+    ) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
+                .padding(padding)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -147,7 +138,7 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
                     label = stringResource(R.string.settings_provider_label),
                     options = ProviderOptions,
                     selected = activeProvider,
-                    onSelect = { form = form.copy(activeProvider = it) },
+                    onSelect = { provider -> vm.update { it.copy(activeProvider = provider) } },
                 )
 
                 // OpenAI 两种接口形态，共用同一套连接配置。
@@ -183,6 +174,8 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     )
 
+                    // 暂不迁移 OutlinedSecureTextField：它是 TextFieldState 版，需与本表单的 StateFlow 双向同步。
+                    @Suppress("DEPRECATION")
                     OutlinedTextField(
                         value = config.apiKey,
                         onValueChange = { value ->
@@ -235,7 +228,7 @@ fun SettingsScreen(onShowOnboarding: () -> Unit) {
                     label = stringResource(R.string.settings_reasoning_label),
                     options = EffortOptions,
                     selected = form.reasoningEffort,
-                    onSelect = { form = form.copy(reasoningEffort = it) },
+                    onSelect = { effort -> vm.update { it.copy(reasoningEffort = effort) } },
                 )
 
                 SettingsDivider()
@@ -494,7 +487,7 @@ private fun ModelPickerDialog(
     )
 }
 
-// 单节面板：标题 + 内容；外观、关于等独立设置项继续使用。
+// 单节面板，供外观、关于等独立设置项使用。
 @Composable
 private fun SettingsPanel(
     title: String,
@@ -526,7 +519,6 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     }
 }
 
-// 框内分节标题，样式与单节面板标题一致。
 @Composable
 private fun SettingsSection(title: String) {
     Text(
@@ -537,7 +529,6 @@ private fun SettingsSection(title: String) {
     )
 }
 
-// 框内分节分隔线。
 @Composable
 private fun SettingsDivider() {
     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))

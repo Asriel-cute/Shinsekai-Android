@@ -29,7 +29,6 @@ internal fun writeTextAtomic(target: File, text: String) {
     }
 }
 
-// 文件名清洗规则（正则预编译）。
 private val ILLEGAL_FILE_NAME_CHARS = Regex("[\\x00-\\x1f<>:\"/\\\\|?*]")
 
 // 清理非法字符与首尾空白，超长截断保留扩展名；空名回退 fallback。

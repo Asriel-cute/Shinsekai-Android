@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -43,42 +44,43 @@ class SettingsRepository(
             emit(emptyPreferences())
         }
 
-    /** 全量配置（含全部提供商），供设置页编辑；仅配置相关 key 变化时才重算（含 Keystore 解密）。 */
-    val allSettings: StateFlow<AllProviderSettings> = preferences
+    // 供设置页编辑；仅配置相关 key 变化时才重算（含 Keystore 解密），null 表示尚未读出。
+    val allSettings: StateFlow<AllProviderSettings?> = preferences
         .map(::rawConfig)
         .distinctUntilChanged()
         .map { raw -> raw.toSettings(cipher) }
-        .stateIn(scope, SharingStarted.Eagerly, AllProviderSettings())
+        .stateIn<AllProviderSettings?>(scope, SharingStarted.Eagerly, null)
 
-    /** 新手引导是否已完成；null 表示尚未读取，缺失 key 或读取失败均视为未完成。 */
+    // null 表示尚未读取；缺失 key 或读取失败均视为未完成。
     val onboardingCompleted: StateFlow<Boolean?> = preferences
         .map { p -> p[ONBOARDING_COMPLETED] ?: false }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
-    /** 主题模式；未设置或读取失败按跟随系统。 */
+    // 未设置或读取失败按跟随系统。
     val themeMode: StateFlow<ThemeMode> = preferences
         .map { p -> p[THEME_MODE].toEnum(ThemeMode.SYSTEM) }
         .stateIn(scope, SharingStarted.Eagerly, ThemeMode.SYSTEM)
 
-    /** BGM 音量（0..1），全局设置；未设置按默认值 0.3。 */
+    // 全局设置（0..1）；未设置按默认值 0.3。
     val bgmVolume: StateFlow<Float> = preferences
         .map { p -> p[BGM_VOLUME] ?: DEFAULT_BGM_VOLUME }
         .stateIn(scope, SharingStarted.Eagerly, DEFAULT_BGM_VOLUME)
 
-    /** 视频聊天画面变化阈值（0.10..0.70），全局设置；未设置按默认值 0.2，越界旧值读取时钳制。 */
+    // 全局设置（0.10..0.70）；未设置按默认值 0.2，越界旧值读取时钳制。
     val cameraChangeThreshold: StateFlow<Float> = preferences
         .map { p -> p[CAMERA_CHANGE_THRESHOLD] ?: DEFAULT_CAMERA_CHANGE_THRESHOLD }
         .map { it.coerceIn(0.10f, 0.70f) }
         .stateIn(scope, SharingStarted.Eagerly, DEFAULT_CAMERA_CHANGE_THRESHOLD)
 
-    /** 视频聊天画面变化冷却（秒），全局设置；0=关闭自动发送，未设置按默认值 30，越界旧值读取时钳制。 */
+    // 全局设置（秒）；0=关闭自动发送，未设置按默认值 30，越界旧值读取时钳制。
     val cameraCooldownSeconds: StateFlow<Int> = preferences
         .map { p -> p[CAMERA_COOLDOWN_SECONDS] ?: DEFAULT_CAMERA_COOLDOWN_SECONDS }
         .map { seconds -> if (seconds == 0) 0 else seconds.coerceIn(10, 120) }
         .stateIn(scope, SharingStarted.Eagerly, DEFAULT_CAMERA_COOLDOWN_SECONDS)
 
-    /** 激活提供商展开后的有效配置，供聊天链路。 */
+    // 激活提供商展开后的有效配置，供聊天链路。
     val settings: StateFlow<ChatSettings> = allSettings
+        .filterNotNull()
         .map { s ->
             val config = s.configs.getValue(s.activeProvider)
             ChatSettings(
@@ -109,35 +111,31 @@ class SettingsRepository(
         }
     }
 
-    /** 标记新手引导已完成；结束/跳过/重看离开时写入。 */
+    // 结束/跳过/重看离开时写入。
     suspend fun completeOnboarding() {
         appContext.settingsDataStore.edit { p ->
             p[ONBOARDING_COMPLETED] = true
         }
     }
 
-    /** 主题选择即时生效并落盘。 */
     suspend fun setThemeMode(mode: ThemeMode) {
         appContext.settingsDataStore.edit { p ->
             p[THEME_MODE] = mode.name
         }
     }
 
-    /** BGM 音量即时生效并落盘。 */
     suspend fun setBgmVolume(volume: Float) {
         appContext.settingsDataStore.edit { p ->
             p[BGM_VOLUME] = volume.coerceIn(0f, 1f)
         }
     }
 
-    /** 画面变化阈值松手落盘。 */
     suspend fun setCameraChangeThreshold(threshold: Float) {
         appContext.settingsDataStore.edit { p ->
             p[CAMERA_CHANGE_THRESHOLD] = threshold.coerceIn(0.10f, 0.70f)
         }
     }
 
-    /** 画面变化冷却松手落盘；0=关闭自动发送。 */
     suspend fun setCameraCooldownSeconds(seconds: Int) {
         appContext.settingsDataStore.edit { p ->
             p[CAMERA_COOLDOWN_SECONDS] = if (seconds == 0) 0 else seconds.coerceIn(10, 120)
