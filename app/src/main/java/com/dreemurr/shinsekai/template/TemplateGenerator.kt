@@ -141,7 +141,7 @@ object TemplateGenerator {
     private fun StringBuilder.appendVideoSection(videoChat: Boolean) {
         if (!videoChat) return
         append("视频通话：你正在与用户进行视频通话。用户的画面会不定期以图像消息（文字标记为「（摄像头画面）」）出现在对话中；看到图像时对画面内容自然反应，没有图像时不要说看不见，按需执行索要画面即可。\n\n")
-        append("想看用户当前画面时，调用 request_camera 工具（无参数）发起画面请求；画面会作为工具结果与图像消息送达，随后在同一轮内继续回复并对画面作出反应。除工具调用外，其余输出仍为规定的 JSON。\n\n")
+        append("想看用户当前画面时，调用 request_camera 工具（无参数）发起画面请求；画面会作为工具结果与图像消息送达，随后在同一轮内继续回复并对画面作出反应。其余输出仍为规定的 JSON。\n\n")
     }
 
     // 主控固定语义：AI 可补写日常台词并按需复述用户台词，其余规则沿用通用提示词。

@@ -21,6 +21,7 @@ import com.dreemurr.shinsekai.chat.StatPayload
 import com.dreemurr.shinsekai.chat.ThinkingPart
 import com.dreemurr.shinsekai.chat.TokenEstimator
 import com.dreemurr.shinsekai.chat.choiceOptions
+import com.dreemurr.shinsekai.chat.hasContent
 import com.dreemurr.shinsekai.chat.presentationKind
 import com.dreemurr.shinsekai.di.AppContainer
 import com.dreemurr.shinsekai.session.ChatSession
@@ -871,6 +872,8 @@ class ChatViewModel(
     private suspend fun handleEvent(event: ChatStreamEvent) {
         when (event) {
             is ChatStreamEvent.DialogPart -> {
+                // {} 或错误 schema 的空条目静默忽略：不上屏、不计有效内容，整轮皆空走格式异常保护。
+                if (!event.dialog.hasContent()) return@handleEvent
                 parsedAnyDialog = true
                 enqueueDialog(event.dialog)
                 val snapshot = _state.value
@@ -1336,22 +1339,34 @@ class ChatViewModel(
         // 工具路径原文不含 CAMERA 条目：落盘时合成标记条目，保持记录/回放形状与文本路径一致。
         val content = if (cameraViaTool) {
             DialogJsonParser.encode(
-                DialogJsonParser.parseAll(rawText) + Dialog(name = CAMERA_MARKER_NAME, sprite = "-1"),
+                DialogJsonParser.parseAll(rawText).filter { it.hasContent() } +
+                    Dialog(name = CAMERA_MARKER_NAME, sprite = "-1"),
             )
+        } else if (complete) {
+            // 成功轮按解析结果重编码：契约外散文与畸形对象不进上下文，展示条目保留做格式正例。
+            val parsed = DialogJsonParser.parseAll(rawText)
+            val dialogs = (cutAfterCamera(parsed) ?: parsed).filter { it.hasContent() }
+            if (dialogs.isEmpty()) return
+            DialogJsonParser.encode(dialogs)
         } else {
+            // 残片保持原文：不进请求，记录面板可查看。
             truncateAfterCamera(rawText)
         }
         if (content.isBlank()) return
         sessionRepo.appendAssistantResult(sessionId, content, complete)
     }
 
-    // CAMERA 即本轮输出终点：保留 CAMERA 及其之前的条目（标记随记录持久化），之后的台词丢弃。
+    // CAMERA 即本轮输出终点：保留 CAMERA 及其之前的条目（标记随记录持久化），之后的台词丢弃；无 CAMERA 返回 null。
+    private fun cutAfterCamera(dialogs: List<Dialog>): List<Dialog>? {
+        val cameraIndex = dialogs.indexOfFirst { presentationKind(it.name) == PresentationKind.Camera }
+        return if (cameraIndex < 0) null else dialogs.subList(0, cameraIndex + 1)
+    }
+
+    // 残片默认保持原文，仅在存在 CAMERA 截断点时重编码截断。
     private fun truncateAfterCamera(rawText: String): String {
         if (!rawText.contains(CAMERA_MARKER_NAME) && !rawText.contains(CAMERA_ALIAS_NAME)) return rawText
-        val dialogs = DialogJsonParser.parseAll(rawText)
-        val cameraIndex = dialogs.indexOfFirst { presentationKind(it.name) == PresentationKind.Camera }
-        if (cameraIndex < 0) return rawText
-        return DialogJsonParser.encode(dialogs.subList(0, cameraIndex + 1))
+        return cutAfterCamera(DialogJsonParser.parseAll(rawText))
+            ?.let { DialogJsonParser.encode(it) } ?: rawText
     }
 
     companion object {

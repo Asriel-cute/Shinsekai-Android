@@ -31,6 +31,10 @@ fun presentationKind(name: String): PresentationKind? {
     }
 }
 
+// 有效内容判定：展示条目恒有效（STAT 空 speech 是清空）；name/speech 全空视为 {} 或错误 schema 的噪声。
+fun Dialog.hasContent(): Boolean =
+    name.isNotBlank() || speech.isNotBlank() || presentationKind(name) != null
+
 // CHOICE 的 speech 拆成选项列表；容忍全角斜杠与换行分隔。
 fun choiceOptions(speech: String): List<String> =
     speech.split('/', '／', '\n').map { it.trim() }.filter { it.isNotEmpty() }
